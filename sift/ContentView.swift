@@ -223,10 +223,13 @@ struct WorkspaceView: View {
             let card = b.cards.removeFirst()
             
             if translation.width > threshold {
-                // → A
+                // → B
                 b.children[1].cards.append(card)
             } else if translation.width < -threshold {
-                // ↑ keep (末尾へ)
+                // ← B
+                b.children[0].cards.append(card)
+            } else if translation.height > threshold {
+                // ↑ keep
                 b.cards.append(card)
             } else {
                 //小さい動きはキャンセル
