@@ -152,6 +152,7 @@ struct WorkspaceView: View {
         }
         .padding(24)
         .navigationBarTitleDisplayMode(.inline)
+        .background(Color.blue.opacity(0.35))
     }
     
     struct CardListSheet: View {
@@ -256,10 +257,13 @@ struct WorkspaceView: View {
             .frame(width: cardw, height: cardH)
             .background(
                 RoundedRectangle(cornerRadius: 28)
-                    .fill(.thinMaterial)
+                    .fill(Color.white)
             )
         }
          .padding(16)
+        
+        .offset(dragOffset)
+        .rotationEffect(.degrees(Double(dragOffset.width / 20)))
         .gesture(
             isDrafting ? nil :
             DragGesture()
@@ -283,7 +287,7 @@ struct WorkspaceView: View {
                 } label: {
                     ZStack {
                         RoundedRectangle(cornerRadius: 24)
-                            .fill(.ultraThinMaterial)
+                            .fill(Color.white)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 24)
                                     .stroke(hoverTarget == idx ? Color.accentColor : .clear, lineWidth: 4)
