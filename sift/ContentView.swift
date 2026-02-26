@@ -137,16 +137,6 @@ struct WorkspaceView: View {
         VStack(spacing: 16) {
             header(box: box)
             
-            if isDrafting {
-                TextEditor(text: $draftText)
-                    .frame(height: 120)
-                    .padding(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.secondary.opacity(0.4))
-                    )
-            }
-            
             Spacer(minLength: 0)
             
             cardStage(box: box)
@@ -231,14 +221,19 @@ struct WorkspaceView: View {
         return ZStack {
             RoundedRectangle(cornerRadius: 28)
                 .fill(.thinMaterial)
-                .frame(maxWidth: 820, minHeight: 240)
+                .frame(maxWidth: 500, minHeight: 180, maxHeight: 300)
+                .padding(16)
             
-            if let current {
+            if isDrafting {
+                TextEditor(text: $draftText)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .padding(20)
+            } else if let  current = box.wrappedValue.cards.first {
                 Text(current.text)
-                    .font(.title3)
+                    .font(.headline)
                     .multilineTextAlignment(.center)
-                    .padding(28)
-                    .frame(maxWidth: 760)
+                    .padding()
             } else {
                 Text("No cards")
                     .foregroundStyle(.secondary)
