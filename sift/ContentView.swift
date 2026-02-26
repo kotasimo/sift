@@ -161,20 +161,35 @@ struct WorkspaceView: View {
 
         var body: some View {
             NavigationStack {
-                List {
-                    ForEach(Array(box.cards.enumerated()), id: \.element.id) { index, card in
-                        Button {
-                            // 選んだカードを先頭に持ってくる
-                            var b = box
-                            let picked = b.cards.remove(at: index)
-                            b.cards.insert(picked, at: 0)
-                            box = b
-                            isPresented = false
-                        } label: {
-                            Text(card.text)
-                                .lineLimit(2)
+                ScrollView {
+                    let columns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
+                    LazyVGrid(columns: columns, spacing: 14) {
+                        ForEach(Array(box.cards.enumerated()), id: \.element.id) { index, card in
+                            Button {
+                                // タップしたカードを先頭に持ってくる（今と同じ）
+                                var b = box
+                                let picked = b.cards.remove(at: index)
+                                b.cards.remove(at: index)
+                                b.cards.insert(picked, at: 0)
+                                box = b
+                                isPresented = false
+                            } label: {
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color.white)
+                                    .overlay(
+                                        Text(card.text)
+                                            .font(.headline)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(6)
+                                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                                            .padding(14)
+                                    )
+                                    .frame(height: 140)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(16)
                 }
                 .navigationTitle("Cards")
                 .toolbar {
