@@ -125,12 +125,27 @@ struct WorkspaceView: View {
     let path: [Int]                 // [] = root, [0] = A, [1] = B, [1,0] = nested...
     @ObservedObject var state: AppState
     @State private var dragOffset: CGSize = .zero
+    @State private var showingList = false
+    private let haptic = UIImpactFeedbackGenerator(style: .medium)
+    @State private var hoverTarget: Int? = nil
+    @State private var isDrafting = false
+    @State private var draftText = ""
 
     var body: some View {
         let box = bindingBox(at: path)
         
         VStack(spacing: 16) {
             header(box: box)
+            
+            if isDrafting {
+                TextEditor(text: $draftText)
+                    .frame(height: 120)
+                    .padding(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.secondary.opacity(0.4))
+                    )
+            }
             
             Spacer(minLength: 0)
             
@@ -142,8 +157,42 @@ struct WorkspaceView: View {
             
             hint()
         }
+        .sheet(isPresented: $showingList) {
+            CardListSheet(box: box, isPresented: $showingList)
+        }
         .padding(24)
         .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    struct CardListSheet: View {
+        @Binding var box: Box
+        @Binding var isPresented: Bool
+
+        var body: some View {
+            NavigationStack {
+                List {
+                    ForEach(Array(box.cards.enumerated()), id: \.element.id) { index, card in
+                        Button {
+                            // 選んだカードを先頭に持ってくる
+                            var b = box
+                            let picked = b.cards.remove(at: index)
+                            b.cards.insert(picked, at: 0)
+                            box = b
+                            isPresented = false
+                        } label: {
+                            Text(card.text)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+                .navigationTitle("Cards")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { isPresented = false }
+                    }
+                }
+            }
+        }
     }
     
     // MARK: - UI parts
@@ -156,20 +205,28 @@ struct WorkspaceView: View {
             Spacer()
             
             Button {
-                // add into CURRENT box
-                var b = box.wrappedValue
-                b.cards.append(Card(text: "New card"))
-                box.wrappedValue = b
+                isDrafting = true
+                draftText = ""
             } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
             }
             .accessibilityLabel("Add card")
+            
+            Button{
+                showingList = true
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.title3)
+            }
+            .accessibilityLabel("show cards")
         }
     }
     
     private func cardStage(box: Binding<Box>) -> some View {
-        let current = box.wrappedValue.cards.first
+        let current = isDrafting
+        ? Card(text: draftText.isEmpty ? " " : draftText)
+        : box.wrappedValue.cards.first
         
         return ZStack {
             RoundedRectangle(cornerRadius: 28)
@@ -188,10 +245,23 @@ struct WorkspaceView: View {
             }
         }
         .offset(dragOffset)
+        .rotationEffect(.degrees(Double(dragOffset.width / 20)))
         .gesture(
             DragGesture()
                 .onChanged { value in
                     dragOffset = value.translation
+                    
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        if value.translation.width > 60 {
+                            hoverTarget = 1
+                        } else if value.translation.width < -60 {
+                            hoverTarget = 0
+                        } else {
+                            hoverTarget = nil
+                        }
+                    } else {
+                        hoverTarget = nil
+                    }
                 }
                 .onEnded { value in
                     handleSwipe(translation: value.translation, box: box)
@@ -211,6 +281,10 @@ struct WorkspaceView: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: 24)
                             .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 24)
+                                    .stroke(hoverTarget == idx ? Color.accentColor : .clear, lineWidth: 4)
+                            )
                             .frame(height: 140)
                         
                         VStack(spacing: 8) {
@@ -277,16 +351,29 @@ struct WorkspaceView: View {
             let threshold: CGFloat = 120
             
             var b = box.wrappedValue
+        
+        if isDrafting {
+            let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                isDrafting = false
+                draftText = ""
+                return
+            }
+            b.cards.insert(Card(text: trimmed), at: 0)
+            isDrafting = false
+            draftText = ""
+        }
+        
             let card = b.cards.removeFirst()
             
             if translation.width > threshold {
-                // → B
+                haptic.impactOccurred()   // → B
                 b.children[1].cards.append(card)
             } else if translation.width < -threshold {
-                // ← B
+                haptic.impactOccurred()   // ← A
                 b.children[0].cards.append(card)
             } else if translation.height < -threshold {
-                // ↑ keep
+                haptic.impactOccurred()   // ↑ keep
                 b.cards.append(card)
             } else {
                 //小さい動きはキャンセル
