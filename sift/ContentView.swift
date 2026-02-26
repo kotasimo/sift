@@ -69,6 +69,7 @@ struct ContentView: View {
 struct WorkspaceView: View {
     let path: [Int]                 // [] = root, [0] = A, [1] = B, [1,0] = nested...
     @ObservedObject var state: AppState
+    @State private var dragOffset: CGSize = .zero
 
     var body: some View {
         let box = bindingBox(at: path)
@@ -131,6 +132,17 @@ struct WorkspaceView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .offset(dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation
+                }
+                .onEnded { value in
+                    handleSwipe(translation: value.translation, box: box)
+                    withAnimation(.spring()) { dragOffset = .zero }
+                }
+        )
     }
     
     private func boxTargets(box: Binding<Box>) -> some View {
@@ -199,6 +211,29 @@ struct WorkspaceView: View {
         var child = box.children[first]
         setBox(&child, path: Array(path.dropFirst()), newValue: newValue)
         box.children[first] = child
+    }
+    
+    private func handleSwipe(translation: CGSize, box: Binding<Box>) {
+        guard !box.wrappedValue.cards.isEmpty else { return }
+        guard box.wrappedValue.children.count >= 2 else { return }
+            
+            let threshold: CGFloat = 120
+            
+            var b = box.wrappedValue
+            let card = b.cards.removeFirst()
+            
+            if translation.width > threshold {
+                // → A
+                b.children[1].cards.append(card)
+            } else if translation.width < -threshold {
+                // ↑ keep (末尾へ)
+                b.cards.append(card)
+            } else {
+                //小さい動きはキャンセル
+                b.cards.insert(card, at: 0)
+            }
+        
+        box.wrappedValue = b
     }
 }
 
