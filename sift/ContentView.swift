@@ -214,49 +214,57 @@ struct WorkspaceView: View {
     }
     
     private func cardStage(box: Binding<Box>) -> some View {
-        let current = isDrafting
-        ? Card(text: draftText.isEmpty ? " " : draftText)
-        : box.wrappedValue.cards.first
+        let cardw: CGFloat = 560
+        let cardH: CGFloat = 220
         
-        return ZStack {
-            RoundedRectangle(cornerRadius: 28)
-                .fill(.thinMaterial)
-                .frame(maxWidth: 500, minHeight: 180, maxHeight: 300)
-                .padding(16)
-            
-            if isDrafting {
-                TextEditor(text: $draftText)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .padding(20)
-            } else if let  current = box.wrappedValue.cards.first {
-                Text(current.text)
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                    .padding()
-            } else {
-                Text("No cards")
-                    .foregroundStyle(.secondary)
+         return ZStack {
+            Group {
+                if isDrafting {
+                    ZStack(alignment: .bottomTrailing) {
+                        TextEditor(text: $draftText)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.clear)
+                            .padding(18)
+                        
+                        HStack(spacing: 12) {
+                            Button {
+                                cancelDraft()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                commitDraft(into: box)
+                            } label: {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.title2)
+                            }
+                        }
+                        .padding(14)
+                    }
+                } else if let  current = box.wrappedValue.cards.first {
+                    Text(current.text)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                } else {
+                    Text("No cards")
+                        .foregroundStyle(.secondary)
+                }
             }
+            .frame(width: cardw, height: cardH)
+            .background(
+                RoundedRectangle(cornerRadius: 28)
+                    .fill(.thinMaterial)
+            )
         }
-        .offset(dragOffset)
-        .rotationEffect(.degrees(Double(dragOffset.width / 20)))
+         .padding(16)
         .gesture(
+            isDrafting ? nil :
             DragGesture()
                 .onChanged { value in
                     dragOffset = value.translation
-                    
-                    if abs(value.translation.width) > abs(value.translation.height) {
-                        if value.translation.width > 60 {
-                            hoverTarget = 1
-                        } else if value.translation.width < -60 {
-                            hoverTarget = 0
-                        } else {
-                            hoverTarget = nil
-                        }
-                    } else {
-                        hoverTarget = nil
-                    }
                 }
                 .onEnded { value in
                     handleSwipe(translation: value.translation, box: box)
@@ -339,21 +347,27 @@ struct WorkspaceView: View {
         box.children[first] = child
     }
     
-    private func handleSwipe(translation: CGSize, box: Binding<Box>) {
-        var b = box.wrappedValue
-        
-        // ① draft を確定（ここで b に入る）
-        if isDrafting {
-            let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                isDrafting = false
-                draftText = ""
-                return
-            }
-            b.cards.insert(Card(text: trimmed), at: 0)
+    private func commitDraft(into box: Binding<Box>) {
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
             isDrafting = false
             draftText = ""
+            return
         }
+        var b = box.wrappedValue
+        b.cards.insert(Card(text: trimmed), at: 0)
+        box.wrappedValue = b
+        isDrafting = false
+        draftText = ""
+    }
+    
+    private func cancelDraft() {
+        isDrafting = false
+        draftText = ""
+    }
+    
+    private func handleSwipe(translation: CGSize, box: Binding<Box>) {
+        var b = box.wrappedValue
         
         // ② ここから先で return するなら、必ず書き戻す
         guard !b.cards.isEmpty else { box.wrappedValue = b; return }
