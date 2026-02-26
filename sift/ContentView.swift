@@ -246,6 +246,7 @@ struct WorkspaceView: View {
             set: { newValue in
                 if path.isEmpty {
                     state.root = newValue
+                    state.scheduleSave()
                     return
                 }
                 var root = state.root
