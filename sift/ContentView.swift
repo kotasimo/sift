@@ -345,13 +345,9 @@ struct WorkspaceView: View {
     }
     
     private func handleSwipe(translation: CGSize, box: Binding<Box>) {
-        guard !box.wrappedValue.cards.isEmpty else { return }
-        guard box.wrappedValue.children.count >= 2 else { return }
-            
-            let threshold: CGFloat = 120
-            
-            var b = box.wrappedValue
+        var b = box.wrappedValue
         
+        // ① draft を確定（ここで b に入る）
         if isDrafting {
             let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
@@ -364,21 +360,23 @@ struct WorkspaceView: View {
             draftText = ""
         }
         
-            let card = b.cards.removeFirst()
-            
-            if translation.width > threshold {
-                haptic.impactOccurred()   // → B
-                b.children[1].cards.append(card)
-            } else if translation.width < -threshold {
-                haptic.impactOccurred()   // ← A
-                b.children[0].cards.append(card)
-            } else if translation.height < -threshold {
-                haptic.impactOccurred()   // ↑ keep
-                b.cards.append(card)
-            } else {
-                //小さい動きはキャンセル
-                b.cards.insert(card, at: 0)
-            }
+        // ② ここから先で return するなら、必ず書き戻す
+        guard !b.cards.isEmpty else { box.wrappedValue = b; return }
+        guard b.children.count >= 2 else { box.wrappedValue = b; return }
+        
+        // ③ 仕分け
+        let threshold: CGFloat = 120
+        let card = b.cards.removeFirst()
+        
+        if translation.width > threshold {
+            b.children[1].cards.append(card)   // → B
+        } else if translation.width < -threshold {
+            b.children[0].cards.append(card)   // ← A
+        } else if translation.height < -threshold {
+            b.cards.append(card)               // ↑ keep
+        } else {
+            b.cards.insert(card, at: 0)        // cancel
+        }
         
         box.wrappedValue = b
     }
