@@ -32,8 +32,16 @@ struct Box: Identifiable, Codable, Equatable {
 @MainActor
 final class AppState: ObservableObject {
     @Published var root: Box
-   
+
+    private let storageKey = "sift_root_v1"
+    private var saveWorkItem: DispatchWorkItem?
+    
     init() {
+        if let loaded = Self.load(key: storageKey) {
+            self.root = loaded
+            return
+        }
+        
         let boxA = Box(name: "A")
         let boxB = Box(name: "B")
         
@@ -41,10 +49,57 @@ final class AppState: ObservableObject {
             name: "Workspace",
             cards: [
                 Card(text: "Sift: swipe to sort"),
-                Card(text: "→ A / ← B / ↑ Keep")
+                Card(text: "← A / → B / ↑ Keep")
             ],
             children: [boxA, boxB]
         )
+    }
+    
+    // 連続操作でも重くならないようにちょい遅延保存
+    func scheduleSave() {
+        saveWorkItem?.cancel()
+        let work = DispatchWorkItem { [root] in
+            Self.save(root, key: self.storageKey)
+        }
+        saveWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+    
+    // MARK: - Persistence (UserDefaults + JSON)
+    
+    private static func save(_ box: Box, key: String) {
+        do {
+            let data = try JSONEncoder().encode(box)
+            UserDefaults.standard.set(data, forKey: key)
+        } catch {
+            print("Save failed:", error)
+        }
+    }
+    
+    private static func load(key: String) -> Box? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(Box.self, from: data)
+        } catch {
+            print("Load failed:", error)
+            return nil
+        }
+    }
+    
+    // （任意）初期化したいとき用
+    func resetToDefaults() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
+        let boxA = Box(name: "A")
+        let boxB = Box(name: "B")
+        root = Box(
+            name: "Workspace",
+            cards: [
+                Card(text: "Sift: swipe to sort"),
+                Card(text: "← A / → B / ↑ Keep")
+            ],
+            children: [boxA, boxB]
+        )
+        scheduleSave()
     }
 }
 
@@ -196,6 +251,7 @@ struct WorkspaceView: View {
                 var root = state.root
                 setBox(&root, path: path, newValue: newValue)
                 state.root = root
+                state.scheduleSave()
             }
         )
     }
@@ -228,7 +284,7 @@ struct WorkspaceView: View {
             } else if translation.width < -threshold {
                 // ← B
                 b.children[0].cards.append(card)
-            } else if translation.height > threshold {
+            } else if translation.height < -threshold {
                 // ↑ keep
                 b.cards.append(card)
             } else {
