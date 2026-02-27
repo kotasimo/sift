@@ -178,19 +178,26 @@ struct WorkspaceView: View {
     
     private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
-            private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
-                ZStack {
-                    ForEach(box.wrappedValue.cards) { card in
-                        DraggableCardView(
-                            card: card,
-                            size: size,
-                            activeID: $draggingID,
-                            onDrop: { id, translation in
-                                onDrop(cardID: id, translation: translation, box: box, size: size)
+            ForEach(box.wrappedValue.cards) { card in
+                let x = CGFloat(card.px) * size.width
+                let y = CGFloat(card.py) * size.height
+                
+                cardView(text: card.text, isDragging: draggingID == card.id)
+                    .zIndex(draggingID == card.id ? 10 : 0)
+                    .position(x: x, y: y)
+                    .offset(draggingID == card.id ? dragOffset : .zero)
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                draggingID = card.id
+                                dragOffset = value.translation
                             }
-                        )
-                    }
-                }
+                            .onEnded { value in
+                                onDrop(cardID: card.id, translation: value.translation, box: box, size: size)
+                                draggingID = nil
+                                dragOffset = .zero
+                            }
+                    )
             }
         }
     }
