@@ -105,38 +105,6 @@ final class AppState: ObservableObject {
         root = Self.defaultRoot()
         scheduleSave()
     }
-    
-    func moveCardToRootChild(from fromPath: [Int], cardID: UUID, toChildIndex t: Int) {
-        guard root.children.indices.contains(t) else { return }
-
-        // 1) 取り出す（fromPath の箱から remove）
-        var picked: Card? = nil
-        var newRoot = root
-        removeCard(&newRoot, path: fromPath, cardID: cardID, picked: &picked)
-        guard var card = picked else { return }
-        
-        // 2) root の子箱へ入れる
-        card.px = 0.50
-        card.py = 0.35
-        newRoot.children[t].cards.append(card)
-        
-        root = newRoot
-        scheduleSave()
-    }
-    
-    private func removeCard(_ box: inout Box, path: [Int], cardID: UUID, picked: inout Card?) {
-        if path.isEmpty {
-            if let i = box.cards.firstIndex(where: { $0.id == cardID }) {
-                picked = box.cards.remove(at: i)
-            }
-            return
-        }
-        let head = path[0]
-        guard box.children.indices.contains(head) else { return }
-        var child = box.children[head]
-        removeCard(&child, path: Array(path.dropFirst()), cardID: cardID, picked: &picked)
-        box.children[head] = child
-    }
 }
 
 // =====================
@@ -300,50 +268,6 @@ struct WorkspaceView: View {
         }
     }
     
-    // MARK: - Drop logic
-    
-    // MARK: - Dock (A/B)
-    
-    private func boxDock(box: Binding<Box>, size: CGSize) -> some View {
-        let dockY: CGFloat = size.height - 110
-        
-        return ZStack {
-            // Left (A)
-            NavigationLink {
-                WorkspaceView(path: [0], state: state)
-                WorkspaceView(path: [1], state: state)
-                WorkspaceView(path: [2], state: state)
-                WorkspaceView(path: [3], state: state)
-            } label: {
-                Circle()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 140, height: 140)
-                    .overlay(
-                        Text(box.wrappedValue.children[0].name)
-                            .font(.title3).bold()
-                            .foregroundStyle(.primary)
-                    )
-            }
-            .buttonStyle(.plain)
-            .position(x: 110, y: dockY)
-            
-            // Right (B)
-            NavigationLink {
-                WorkspaceView(path: path + [1], state: state)
-            } label: {
-                Circle()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: 140, height: 140)
-                    .overlay(
-                        Text(box.wrappedValue.children[1].name)
-                            .font(.title3).bold()
-                            .foregroundStyle(.primary)
-                    )
-            }
-            .buttonStyle(.plain)
-            .position(x: size.width - 110, y: dockY)
-        }
-    }
     
     // MARK: - Input bar
     
@@ -419,7 +343,7 @@ struct WorkspaceView: View {
     
     private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
-            if box.wrappedValue.children.count >= 4 {
+            if state.root.children.count >= 4 {
                 // 上
                 NavigationLink {
                     WorkspaceView(currentIndex: 2, state: state)
@@ -474,7 +398,7 @@ struct WorkspaceView: View {
         let boostY = abs(predicted.height - translation.height)
         let isFlick = max(boostX, boostY) > 260  // ←吸われすぎるなら増やす（例: 320）
         
-        guard b.children.count >= 4, isFlick, let tIndex = targetIndex(from: predicted) else {
+        guard state.root.children.count >= 4, isFlick, let tIndex = targetIndex(from: predicted) else {
             return
         }
             
@@ -492,9 +416,18 @@ struct WorkspaceView: View {
             haptic.impactOccurred()
 
             // アニメ後に本当に移動
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
-                state.moveCardToRootChild(from: path, cardID: cardID, toChildIndex: tIndex)
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+            // 1) 今見てるboxから抜く
+            var from = box.wrappedValue
+            guard let i2 = from.cards.firstIndex(where: { $0.id == cardID }) else { return }
+            var moved = from.cards.remove(at: i2)
+            box.wrappedValue = from   // 画面側に反映（ここで消える）
+                                                                
+            // 2) rootのターゲット箱へ入れる
+            moved.px = 0.50
+            moved.py = 0.35
+            state.root.children[tIndex].cards.append(moved)
+            state.scheduleSave()            }
     }
     
     private func offscreenNormalizedPosition(from card: Card, target: Int) -> (px: Double, py: Double) {
