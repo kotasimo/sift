@@ -135,6 +135,7 @@ struct WorkspaceView: View {
     @State private var draggingID: UUID? = nil
     @State private var hoverTarget: Int? = nil
     @State private var dragOffset: CGSize = .zero
+    @State private var dragBase: (px: Double, py: Double)? = nil
     
     @FocusState private var inputFocused: Bool
     
@@ -191,22 +192,41 @@ struct WorkspaceView: View {
                 cardView(text: card.text, isDragging: draggingID == card.id)
                     .zIndex(draggingID == card.id ? 10 : 0)
                     .position(x: x, y: y)
-                    .offset(draggingID == card.id ? dragOffset : .zero)
-                    .rotationEffect(.degrees(draggingID == card.id ? tiltDegrees(from: dragOffset) : 0))
-                    .scaleEffect(draggingID == card.id ? 1.03 : 1.0)
                     .gesture(
                         DragGesture()
                             .onChanged { value in
-                                draggingID = card.id
-                                dragOffset = value.translation
-                                hoverTarget = targetIndex(from: value.translation)
-                            }
+                                // どのカードを掴んでるか
+                                if draggingID != card.id {
+                                    draggingID = card.id
+                                    dragBase = (px: card.px, py: card.py)
+                                }
+                        // target 判定は translation のままでOK
+                        hoverTarget = targetIndex(from: value.translation)
+                        
+                        // ここが核心：px/py を直接更新（アニメ無し）
+                        guard let base = dragBase else { return }
+                        
+                        let newX = CGFloat(base.px) * size.width + value.translation.width
+                        let newY = CGFloat(base.py) * size.height + value.translation.height
+                        
+                        let clampedX = min(max(newX, 30), size.width - 30)
+                        let clampedY = min(max(newY, 30), size.height - 200)
+                        
+                        var b = box.wrappedValue
+                        guard let idx = b.cards.firstIndex(where: { $0.id == card.id }) else { return }
+                        
+                        var tx = Transaction()
+                        tx.animation = nil
+                        withTransaction(tx) {
+                            b.cards[idx].px = Double(clampedX / size.width)
+                            b.cards[idx].py = Double(clampedY / size.height)
+                            box.wrappedValue = b
+                        }
+                     }
                             .onEnded { value in
                                 onDrop(cardID: card.id, translation: value.translation, box: box, size: size)
                                 draggingID = nil
-                                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2)){
-                                    dragOffset = .zero
-                                }
+                                dragBase = nil
                                 hoverTarget = nil
                             }
                     )
@@ -433,8 +453,36 @@ struct WorkspaceView: View {
         // ① 方向で箱に投げ込む（確定したら“吸い込み”）
         if b.children.count >= 4, let tIndex = targetIndex(from: translation) {
             
+            // 今見えてる“ドロップ位置”を絶対座標で作る
+            let dropX = curX + translation.width
+            let dropY = curY + translation.height
+            
+            // 机上の範囲にクランプ（いま机上移動で使ってるのと同じ思想）
+            let clampedX = min(max(dropX, 30), size.width - 30)
+            let clampedY = min(max(dropY, 30), size.height - 200)
+            
+            // ここが肝：アニメ無しで px/py を“今の位置”に合わせる
+            b.cards[idx].px = Double(clampedX / size.width)
+            b.cards[idx].py = Double(clampedY / size.height)
+            box.wrappedValue = b
+            
             // a) まずカードを“画面外”へアニメ移動（吸い込みの見た目）
             let out = offscreenNormalizedPosition(from: b.cards[idx], target: tIndex)
+            
+            var tx = Transaction()
+            tx.animation = nil
+            
+            withTransaction(tx) {
+                // 先に offset を殺す（=二重適用を防ぐ）
+                dragOffset = .zero
+                draggingID = nil
+                hoverTarget = nil
+                
+                // そのうえで “ドロップ位置” を px/py に焼き込む
+                b.cards[idx].px = Double(clampedX / size.width)
+                b.cards[idx].py = Double(clampedY / size.height)
+                box.wrappedValue = b
+            }
             
             withAnimation(.easeIn(duration: 0.18)) {
                 b.cards[idx].px = out.px
