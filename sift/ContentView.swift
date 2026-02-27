@@ -16,6 +16,9 @@ import Combine
 struct Card: Identifiable, Codable, Equatable {
     var id = UUID()
     var text: String
+    // normalized position (0...1)
+    var px: Double
+    var py: Double
 }
 
 struct Box: Identifiable, Codable, Equatable {
@@ -32,8 +35,8 @@ struct Box: Identifiable, Codable, Equatable {
 @MainActor
 final class AppState: ObservableObject {
     @Published var root: Box
-
-    private let storageKey = "sift_root_v1"
+    // v2: because Card gained px/py and old JSON won't decode
+    private let storageKey = "sift_root_v2"
     private var saveWorkItem: DispatchWorkItem?
     
     init() {
@@ -41,18 +44,8 @@ final class AppState: ObservableObject {
             self.root = loaded
             return
         }
-        
-        let boxA = Box(name: "A")
-        let boxB = Box(name: "B")
-        
-        self.root = Box(
-            name: "Workspace",
-            cards: [
-                Card(text: "Sift: swipe to sort"),
-                Card(text: "← A / → B / ↑ Keep")
-            ],
-            children: [boxA, boxB]
-        )
+        self.root = Self.defaultRoot()
+        scheduleSave()
     }
     
     // 連続操作でも重くならないようにちょい遅延保存
@@ -86,19 +79,27 @@ final class AppState: ObservableObject {
         }
     }
     
-    // （任意）初期化したいとき用
-    func resetToDefaults() {
-        UserDefaults.standard.removeObject(forKey: storageKey)
+    // MARK: - Defaults / Reset
+    
+    static func defaultRoot() -> Box {
+        // Root has two child boxes A/B (like your current app)
         let boxA = Box(name: "A")
         let boxB = Box(name: "B")
-        root = Box(
+        
+        return Box(
             name: "Workspace",
             cards: [
-                Card(text: "Sift: swipe to sort"),
-                Card(text: "← A / → B / ↑ Keep")
+                Card(text: "Drag cards around", px: 0.52, py: 0.22),
+                Card(text: "Drop into A / B (bottom circles)", px: 0.48, py: 0.36),
+                Card(text: "Use the input bar to create new cards", px: 0.55, py: 0.50)
             ],
             children: [boxA, boxB]
         )
+    }
+    
+    func resetToDefaults() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
+        root = Self.defaultRoot()
         scheduleSave()
     }
 }
@@ -109,7 +110,7 @@ final class AppState: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var state = AppState()
-    
+
     var body: some View {
         NavigationStack {
             WorkspaceView(path: [], state: state)
@@ -124,210 +125,235 @@ struct ContentView: View {
 struct WorkspaceView: View {
     let path: [Int]                 // [] = root, [0] = A, [1] = B, [1,0] = nested...
     @ObservedObject var state: AppState
+    // input (always at bottom)
+    @State private var draftText: String = ""
+    
+    // dragging
+    @State private var draggingID: UUID? = nil
     @State private var dragOffset: CGSize = .zero
-    @State private var showingList = false
+    
+    @FocusState private var inputFocused: Bool
+    
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
-    @State private var hoverTarget: Int? = nil
-    @State private var isDrafting = false
-    @State private var draftText = ""
-
+    
     var body: some View {
         let box = bindingBox(at: path)
         
-        VStack(spacing: 16) {
-            header(box: box)
+    ZStack {
+        Color.blue.opacity(0.35).ignoresSafeArea()
+        
+        GeometryReader { geo in
+            let size = geo.size
             
-            Spacer(minLength: 0)
-            
-            cardStage(box: box)
-            
-            Spacer(minLength: 0)
-            
-            boxTargets(box: box)
-            
-            hint()
+            ZStack {
+                // 1) Desk: scattered cards
+                cardBoard(box: box, size: size)
+                
+                // 2) Dock (A/B circles) only if this box has children
+                if box.wrappedValue.children.count >= 2 {
+                    boxDock(box: box, size: size)
+                }
+                
+                // 3) Input bar (always)
+                inputBar(box: box)
+            }
+            .padding(24)
+            .navigationTitle(box.wrappedValue.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        state.resetToDefaults()
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .accessibilityLabel("Reset")
+                }
+            }
         }
-        .sheet(isPresented: $showingList) {
-            CardListSheet(box: box, isPresented: $showingList)
-        }
-        .padding(24)
-        .navigationBarTitleDisplayMode(.inline)
-        .background(Color.blue.opacity(0.35))
+    }
     }
     
-    struct CardListSheet: View {
-        @Binding var box: Box
-        @Binding var isPresented: Bool
-
-        var body: some View {
-            NavigationStack {
-                ScrollView {
-                    let columns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
-                    LazyVGrid(columns: columns, spacing: 14) {
-                        ForEach(Array(box.cards.enumerated()), id: \.element.id) { index, card in
-                            Button {
-                                // タップしたカードを先頭に持ってくる（今と同じ）
-                                var b = box
-                                let picked = b.cards.remove(at: index)
-                                b.cards.remove(at: index)
-                                b.cards.insert(picked, at: 0)
-                                box = b
-                                isPresented = false
-                            } label: {
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color.white)
-                                    .overlay(
-                                        Text(card.text)
-                                            .font(.headline)
-                                            .multilineTextAlignment(.leading)
-                                            .lineLimit(6)
-                                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                                            .padding(14)
-                                    )
-                                    .frame(height: 140)
+    // MARK: - Desk (cards)
+    
+    private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
+        ZStack {
+            private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
+                ZStack {
+                    ForEach(box.wrappedValue.cards) { card in
+                        DraggableCardView(
+                            card: card,
+                            size: size,
+                            activeID: $draggingID,
+                            onDrop: { id, translation in
+                                onDrop(cardID: id, translation: translation, box: box, size: size)
                             }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(16)
-                }
-                .navigationTitle("Cards")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { isPresented = false }
+                        )
                     }
                 }
             }
         }
     }
     
-    // MARK: - UI parts
+    private func cardView(text: String, isDragging: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 20)
+            .fill(Color.white)
+            .overlay(
+                Text(text)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(14)
+            )
+            .frame(width: 260, height: 140)
+            .shadow(radius: isDragging ? 5 : 6, y: isDragging ? 5 : 4)
+            .scaleEffect(isDragging ? 1.03 : 1.0)
+    }
     
-    private func header(box: Binding<Box>) -> some View {
-        HStack {
-            Text(box.wrappedValue.name)
-                .font(.title2).bold()
+    // MARK: - Drop logic
+    
+    private func onDrop(cardID: UUID, translation: CGSize, box: Binding<Box>, size: CGSize) {
+        var b = box.wrappedValue
+        guard let idx = b.cards.firstIndex(where: { $0.id == cardID }) else { return }
+        
+        // current normalized -> absolute
+        let cur = b.cards[idx]
+        let curX = CGFloat(cur.px) * size.width
+        let curY = CGFloat(cur.py) * size.height
+        
+        // new absolute position
+        let newX = curX + translation.width
+        let newY = curY + translation.height
+        let p = CGPoint(x: newX, y: newY)
+        
+        // dock centers
+        let dockY = size.height - 110
+        let leftCenter  = CGPoint(x: 110, y: dockY)
+        let rightCenter = CGPoint(x: size.width - 110, y: dockY)
+        let r: CGFloat = 70
+        
+        func inside(_ p: CGPoint, _ c: CGPoint) -> Bool {
+            let dx = p.x - c.x
+            let dy = p.y - c.y
+            return (dx*dx + dy*dy) <= r*r
+        }
+        
+        // if dropped into a child box: move card
+        if b.children.count >= 2 {
+            if inside(p, leftCenter) {
+                let moved = b.cards.remove(at: idx)
+                b.children[0].cards.append(moved)
+                box.wrappedValue = b
+                haptic.impactOccurred()
+                return
+            }
+            if inside(p, rightCenter) {
+                let moved = b.cards.remove(at: idx)
+                b.children[1].cards.append(moved)
+                box.wrappedValue = b
+                haptic.impactOccurred()
+                return
+            }
+        }
+        
+        // otherwise: update position (clamp to desk area)
+        let clampedX = min(max(newX, 30), size.width - 30)
+        let clampedY = min(max(newY, 30), size.height - 200) // keep above input bar zone
+        
+        b.cards[idx].px = Double(clampedX / size.width)
+        b.cards[idx].py = Double(clampedY / size.height)
+        box.wrappedValue = b
+    }
+    
+    // MARK: - Dock (A/B)
+    
+    private func boxDock(box: Binding<Box>, size: CGSize) -> some View {
+        let dockY: CGFloat = size.height - 110
+        
+        return ZStack {
+            // Left (A)
+            NavigationLink {
+                WorkspaceView(path: path + [0], state: state)
+            } label: {
+                Circle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 140, height: 140)
+                    .overlay(
+                        Text(box.wrappedValue.children[0].name)
+                            .font(.title3).bold()
+                            .foregroundStyle(.primary)
+                    )
+            }
+            .buttonStyle(.plain)
+            .position(x: 110, y: dockY)
             
-            Spacer()
+            // Right (B)
+            NavigationLink {
+                WorkspaceView(path: path + [1], state: state)
+            } label: {
+                Circle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 140, height: 140)
+                    .overlay(
+                        Text(box.wrappedValue.children[1].name)
+                            .font(.title3).bold()
+                            .foregroundStyle(.primary)
+                    )
+            }
+            .buttonStyle(.plain)
+            .position(x: size.width - 110, y: dockY)
+        }
+    }
+    
+    // MARK: - Input bar
+    
+    private func inputBar(box: Binding<Box>) -> some View {
+        HStack(spacing: 12) {
+            TextField("テキスト入力", text: $draftText, axis: .vertical)
+                .focused($inputFocused)
+                .lineLimit(1...3)
+                .textFieldStyle(.roundedBorder)
+            
+                .toolbar{
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("done") {inputFocused = false}
+                    }
+                }
             
             Button {
-                isDrafting = true
-                draftText = ""
+                addCard(box: box)
             } label: {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Add card")
-            
-            Button{
-                showingList = true
-            } label: {
-                Image(systemName: "list.bullet")
-                    .font(.title3)
-            }
-            .accessibilityLabel("show cards")
         }
+        .zIndex(1000)
+        .padding(14)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .frame(maxWidth: 560)
+        .frame(maxHeight: .infinity, alignment: .bottom)
     }
     
-    private func cardStage(box: Binding<Box>) -> some View {
-        let cardw: CGFloat = 560
-        let cardH: CGFloat = 220
+    private func addCard(box: Binding<Box>) {
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         
-         return ZStack {
-            Group {
-                if isDrafting {
-                    ZStack(alignment: .bottomTrailing) {
-                        TextEditor(text: $draftText)
-                            .scrollContentBackground(.hidden)
-                            .background(Color.clear)
-                            .padding(18)
-                        
-                        HStack(spacing: 12) {
-                            Button {
-                                cancelDraft()
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.title2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Button {
-                                commitDraft(into: box)
-                            } label: {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.title2)
-                            }
-                        }
-                        .padding(14)
-                    }
-                } else if let  current = box.wrappedValue.cards.first {
-                    Text(current.text)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                        .padding()
-                } else {
-                    Text("No cards")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: cardw, height: cardH)
-            .background(
-                RoundedRectangle(cornerRadius: 28)
-                    .fill(Color.white)
-            )
-        }
-         .padding(16)
+        var b = box.wrappedValue
         
-        .offset(dragOffset)
-        .rotationEffect(.degrees(Double(dragOffset.width / 20)))
-        .gesture(
-            isDrafting ? nil :
-            DragGesture()
-                .onChanged { value in
-                    dragOffset = value.translation
-                }
-                .onEnded { value in
-                    handleSwipe(translation: value.translation, box: box)
-                    withAnimation(.spring()) { dragOffset = .zero }
-                }
-        )
-    }
-    
-    private func boxTargets(box: Binding<Box>) -> some View {
-        let children = box.wrappedValue.children
+        // spawn around upper-middle
+        let px = min(max(0.5 + Double.random(in: -0.14...0.14), 0.08), 0.92)
+        let py = min(max(0.35 + Double.random(in: -0.10...0.10), 0.08), 0.80)
         
-        return HStack(spacing: 16) {
-            ForEach(children.indices, id: \.self) { idx in
-                NavigationLink {
-                    WorkspaceView(path: path + [idx], state: state)
-                } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 24)
-                            .fill(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24)
-                                    .stroke(hoverTarget == idx ? Color.accentColor : .clear, lineWidth: 4)
-                            )
-                            .frame(height: 140)
-                        
-                        VStack(spacing: 8) {
-                            Text(children[idx].name)
-                                .font(.title3).bold()
-                            Text("Tap to open")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-    
-    private func hint() -> some View {
-        Text("→ A    ← B    ↑ Keep")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.top, 8)
+        b.cards.append(Card(text: trimmed, px: px, py: py))
+        box.wrappedValue = b
+        draftText = ""
+        haptic.impactOccurred()
     }
     
     // MARK: - Binding Box by Path
@@ -365,48 +391,51 @@ struct WorkspaceView: View {
         setBox(&child, path: Array(path.dropFirst()), newValue: newValue)
         box.children[first] = child
     }
+}
+
+struct DraggableCardView: View {
+    let card: Card
+    let size: CGSize
+
+    // 親から渡す：いま前面にしたいカードID
+    @Binding var activeID: UUID?
     
-    private func commitDraft(into box: Binding<Box>) {
-        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            isDrafting = false
-            draftText = ""
-            return
-        }
-        var b = box.wrappedValue
-        b.cards.insert(Card(text: trimmed), at: 0)
-        box.wrappedValue = b
-        isDrafting = false
-        draftText = ""
-    }
+    // 親から渡す：ドロップ処理（座標更新/箱に入れる）
+    let onDrop: (UUID, CGSize) -> Void
     
-    private func cancelDraft() {
-        isDrafting = false
-        draftText = ""
-    }
+    @State private var dragOffset: CGSize = .zero
     
-    private func handleSwipe(translation: CGSize, box: Binding<Box>) {
-        var b = box.wrappedValue
+    var body: some View {
+        let x = CGFloat(card.px) * size.width
+        let y = CGFloat(card.py) * size.height
+        let isActive = (activeID == card.id)
         
-        // ② ここから先で return するなら、必ず書き戻す
-        guard !b.cards.isEmpty else { box.wrappedValue = b; return }
-        guard b.children.count >= 2 else { box.wrappedValue = b; return }
-        
-        // ③ 仕分け
-        let threshold: CGFloat = 120
-        let card = b.cards.removeFirst()
-        
-        if translation.width > threshold {
-            b.children[1].cards.append(card)   // → B
-        } else if translation.width < -threshold {
-            b.children[0].cards.append(card)   // ← A
-        } else if translation.height < -threshold {
-            b.cards.append(card)               // ↑ keep
-        } else {
-            b.cards.insert(card, at: 0)        // cancel
-        }
-        
-        box.wrappedValue = b
+        RoundedRectangle(cornerRadius: 20)
+            .fill(.white)
+            .overlay(
+                Text(card.text)
+                    .font(.headline)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(14)
+            )
+            .frame(width: 260, height: 140)
+            .position(x: x, y: y)
+            .offset(isActive ? dragOffset : .zero)
+            .zIndex(isActive ? 10 : 0)
+            .shadow(radius: isActive ? 10 : 5, y: isActive ? 6 : 3) // 軽め推奨
+            .gesture(
+                DragGesture()
+                    .onChanged { v in
+                        activeID = card.id
+                        dragOffset = v.translation
+                    }
+                    .onEnded { v in
+                        onDrop(card.id, v.translation)
+                        dragOffset = .zero
+                        activeID = nil
+                    }
+            )
     }
 }
 
