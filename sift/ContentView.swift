@@ -105,6 +105,38 @@ final class AppState: ObservableObject {
         root = Self.defaultRoot()
         scheduleSave()
     }
+    
+    func moveCardToRootChild(from fromPath: [Int], cardID: UUID, toChildIndex t: Int) {
+        guard root.children.indices.contains(t) else { return }
+
+        // 1) 取り出す（fromPath の箱から remove）
+        var picked: Card? = nil
+        var newRoot = root
+        removeCard(&newRoot, path: fromPath, cardID: cardID, picked: &picked)
+        guard var card = picked else { return }
+        
+        // 2) root の子箱へ入れる
+        card.px = 0.50
+        card.py = 0.35
+        newRoot.children[t].cards.append(card)
+        
+        root = newRoot
+        scheduleSave()
+    }
+    
+    private func removeCard(_ box: inout Box, path: [Int], cardID: UUID, picked: inout Card?) {
+        if path.isEmpty {
+            if let i = box.cards.firstIndex(where: { $0.id == cardID }) {
+                picked = box.cards.remove(at: i)
+            }
+            return
+        }
+        let head = path[0]
+        guard box.children.indices.contains(head) else { return }
+        var child = box.children[head]
+        removeCard(&child, path: Array(path.dropFirst()), cardID: cardID, picked: &picked)
+        box.children[head] = child
+    }
 }
 
 // =====================
@@ -116,7 +148,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            WorkspaceView(path: [], state: state)
+            WorkspaceView(currentIndex: nil, state: state)
         }
     }
 }
@@ -126,7 +158,7 @@ struct ContentView: View {
 // =====================
 
 struct WorkspaceView: View {
-    let path: [Int]                 // [] = root, [0] = A, [1] = B, [1,0] = nested...
+    let currentIndex: Int?                // [] = root, [0] = A, [1] = B, [1,0] = nested...
     @ObservedObject var state: AppState
     // input (always at bottom)
     @State private var draftText: String = ""
@@ -142,7 +174,7 @@ struct WorkspaceView: View {
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
     
     var body: some View {
-        let box = bindingBox(at: path)
+        let box = bindingBox()
         
         ZStack {
             Color.blue.opacity(0.35).ignoresSafeArea()
@@ -278,7 +310,10 @@ struct WorkspaceView: View {
         return ZStack {
             // Left (A)
             NavigationLink {
-                WorkspaceView(path: path + [0], state: state)
+                WorkspaceView(path: [0], state: state)
+                WorkspaceView(path: [1], state: state)
+                WorkspaceView(path: [2], state: state)
+                WorkspaceView(path: [3], state: state)
             } label: {
                 Circle()
                     .fill(Color.white.opacity(0.9))
@@ -362,38 +397,24 @@ struct WorkspaceView: View {
     
     // MARK: - Binding Box by Path
     
-    private func bindingBox(at path: [Int]) -> Binding<Box> {
+    private func bindingBox() -> Binding<Box> {
         Binding(
             get: {
-                var current = state.root
-                for i in path { current = current.children[i] }
-                return current
+                if let i = currentIndex, state.root.children.indices.contains(i) {
+                    return state.root.children[i]
+                } else {
+                    return state.root
+                }
             },
             set: { newValue in
-                if path.isEmpty {
+                if let i = currentIndex, state.root.children.indices.contains(i) {
+                    state.root.children[i] = newValue
+                } else {
                     state.root = newValue
-                    state.scheduleSave()
-                    return
                 }
-                var root = state.root
-                setBox(&root, path: path, newValue: newValue)
-                state.root = root
                 state.scheduleSave()
             }
         )
-    }
-    
-    private func setBox(_ box: inout Box, path: [Int], newValue: Box) {
-        guard let first = path.first else { return }
-        
-        if path.count == 1 {
-            box.children[first] = newValue
-            return
-        }
-        
-        var child = box.children[first]
-        setBox(&child, path: Array(path.dropFirst()), newValue: newValue)
-        box.children[first] = child
     }
     
     private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
@@ -401,36 +422,36 @@ struct WorkspaceView: View {
             if box.wrappedValue.children.count >= 4 {
                 // 上
                 NavigationLink {
-                    WorkspaceView(path: path + [2], state: state)
+                    WorkspaceView(currentIndex: 2, state: state)
                 } label: {
-                    cornerLabel(text: box.wrappedValue.children[2].name, active: hoverTarget == 2 )
+                    cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2 )
                 }
                 .buttonStyle(.plain)
                 .position(x: size.width / 2, y: 40)
                 
                 // 下
                 NavigationLink {
-                    WorkspaceView(path: path + [3], state: state)
+                    WorkspaceView(currentIndex: 3, state: state)
                 } label: {
-                    cornerLabel(text: box.wrappedValue.children[3].name, active: hoverTarget == 3 )
+                    cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3 )
                 }
                 .buttonStyle(.plain)
                 .position(x: size.width / 2, y: size.height - 150)
                 
                 // 左
                 NavigationLink {
-                    WorkspaceView(path: path + [0], state: state)
+                    WorkspaceView(currentIndex: 0, state: state)
                 } label: {
-                    cornerLabel(text: box.wrappedValue.children[0].name, active: hoverTarget == 0 )
+                    cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0 )
                 }
                 .buttonStyle(.plain)
                 .position(x: 50, y: size.height / 2)
                 
                 // 右
                 NavigationLink {
-                    WorkspaceView(path: path + [1], state: state)
+                    WorkspaceView(currentIndex: 1, state: state)
                 } label: {
-                    cornerLabel(text: box.wrappedValue.children[1].name, active: hoverTarget == 1 )
+                    cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1 )
                 }
                 .buttonStyle(.plain)
                 .position(x: size.width - 50, y: size.height / 2)
@@ -472,18 +493,7 @@ struct WorkspaceView: View {
 
             // アニメ後に本当に移動
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
-                var b2 = box.wrappedValue
-                guard let i2 = b2.cards.firstIndex(where: { $0.id == cardID }) else { return }
-
-                var moved = b2.cards.remove(at: i2)
-                // 子Box側の出現位置（好みで調整）
-                moved.px = 0.50
-                moved.py = 0.35
-
-                // children が減ってたら保険（事故防止）
-                guard b2.children.indices.contains(tIndex) else { return }
-                b2.children[tIndex].cards.append(moved)
-                box.wrappedValue = b2
+                state.moveCardToRootChild(from: path, cardID: cardID, toChildIndex: tIndex)
             }
     }
     
