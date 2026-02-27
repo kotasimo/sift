@@ -192,18 +192,21 @@ struct WorkspaceView: View {
                     .zIndex(draggingID == card.id ? 10 : 0)
                     .position(x: x, y: y)
                     .offset(draggingID == card.id ? dragOffset : .zero)
+                    .rotationEffect(.degrees(draggingID == card.id ? tiltDegrees(from: dragOffset) : 0))
+                    .scaleEffect(draggingID == card.id ? 1.03 : 1.0)
                     .gesture(
                         DragGesture()
                             .onChanged { value in
                                 draggingID = card.id
                                 dragOffset = value.translation
-                                
                                 hoverTarget = targetIndex(from: value.translation)
                             }
                             .onEnded { value in
                                 onDrop(cardID: card.id, translation: value.translation, box: box, size: size)
                                 draggingID = nil
-                                dragOffset = .zero
+                                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2)){
+                                    dragOffset = .zero
+                                }
                                 hoverTarget = nil
                             }
                     )
@@ -426,13 +429,36 @@ struct WorkspaceView: View {
         // 新しい位置（絶対座標）
         let newX = curX + translation.width
         let newY = curY + translation.height
-
-        // ① 方向で箱に投げ込む（斜めのみ確定）
+        
+        // ① 方向で箱に投げ込む（確定したら“吸い込み”）
         if b.children.count >= 4, let tIndex = targetIndex(from: translation) {
-            let moved = b.cards.remove(at: idx)
-            b.children[tIndex].cards.append(moved)
-            box.wrappedValue = b
+            
+            // a) まずカードを“画面外”へアニメ移動（吸い込みの見た目）
+            let out = offscreenNormalizedPosition(from: b.cards[idx], target: tIndex)
+            
+            withAnimation(.easeIn(duration: 0.18)) {
+                b.cards[idx].px = out.px
+                b.cards[idx].py = out.py
+                box.wrappedValue = b
+            }
+            
             haptic.impactOccurred()
+            
+            // b) アニメ後に “ほんとに” 移動（ここで消えてOK）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                var b2 = box.wrappedValue
+                
+                guard let i2 = b2.cards.firstIndex(where: { $0.id == cardID }) else { return }
+                var moved = b2.cards.remove(at: i2)
+                
+                // 子Box側で出現位置を軽く整える（任意）
+                moved.px = 0.50
+                moved.py = 0.35
+                
+                b2.children[tIndex].cards.append(moved)
+                box.wrappedValue = b2
+            }
+            
             return
         }
 
@@ -443,6 +469,16 @@ struct WorkspaceView: View {
         b.cards[idx].px = Double(clampedX / size.width)
         b.cards[idx].py = Double(clampedY / size.height)
         box.wrappedValue = b
+    }
+    
+    private func offscreenNormalizedPosition(from card: Card, target: Int) -> (px: Double, py: Double) {
+        // target: 0=左 1=右 2=上 3=下
+        switch target {
+        case 0: return (px: -0.25, py: card.py)   // left
+        case 1: return (px:  1.25, py: card.py)   // right
+        case 2: return (px: card.px, py: -0.25)   // up
+        default: return (px: card.px, py:  1.25)  // down
+        }
     }
     
     private func cornerLabel(text: String, active: Bool) -> some View {
@@ -457,6 +493,15 @@ struct WorkspaceView: View {
             .foregroundStyle(active ? .black : .white)
             .scaleEffect(active ? 1.2 : 1.0)
             .animation(.easeOut(duration: 0.12), value: active)
+    }
+    private func tiltDegrees(from t: CGSize) -> Double {
+        let dx = Double(t.width)
+        let normalized = max(-1, min(1, dx / 140.0))
+        let base = normalized * 10.0
+        let boost = (hoverTarget == 0 || hoverTarget == 1) ? 4.0 : 0.0
+        
+        // 左ならマイナス、右ならプラスに自然に足す
+        return base + (normalized >= 0 ? boost : -boost)
     }
 }
 
