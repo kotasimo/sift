@@ -156,14 +156,13 @@ struct WorkspaceView: View {
                 cornerLabels(box: box, size: size)
                 
                 // 2) Dock (A/B circles) only if this box has children
-                if box.wrappedValue.children.count >= 2 {
-                    boxDock(box: box, size: size)
-                }
+//                if box.wrappedValue.children.count >= 2 {
+//                    boxDock(box: box, size: size)
+//                }
                 
                 // 3) Input bar (always)
                 inputBar(box: box)
             }
-            .padding(24)
             .navigationTitle(box.wrappedValue.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -226,25 +225,24 @@ struct WorkspaceView: View {
                     .padding(14)
             )
             .frame(width: 260, height: 140)
-            .shadow(radius: isDragging ? 5 : 6, x: 0, y: isDragging ? 5 : 4)
+            .shadow(radius: isDragging ? 5 : 6, y: isDragging ? 5 : 4)
             .scaleEffect(isDragging ? 1.03 : 1.0)
-            .drawingGroup()
     }
     
     private func targetIndex(from t: CGSize, threshold: CGFloat = 120) -> Int? {
         let dx = t.width
         let dy = t.height
-    
-        // 斜めだけ確定（誤爆防止）
-        let xOK = abs(dx) >= threshold
-        let yOK = abs(dy) >= threshold
-        guard xOK && yOK else { return nil }
+        let ax = abs(dx)
+        let ay = abs(dy)
+        // どっちも弱いなら確定しない
+        guard ax >= threshold || ay >= threshold else { return nil }
         
-        // iOS座標: 上はdyがマイナス
-        if dx < 0 && dy < 0 { return 0 } // 左上 = children[0]
-        if dx > 0 && dy < 0 { return 1 } // 右上 = children[1]
-        if dx < 0 && dy > 0 { return 2 } // 左下 = children[2]
-        return 3                          // 右下 = children[3]
+        // 斜めは「強い軸」だけ採用（= どっちか）
+        if ax >= ay {
+            return dx < 0 ? 0 : 1   // 左 / 右
+        } else {
+            return dy < 0 ? 2 : 3   // 上 / 下（上はマイナス）
+        }
     }
     
     // MARK: - Drop logic
@@ -377,24 +375,43 @@ struct WorkspaceView: View {
     private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
             if box.wrappedValue.children.count >= 4 {
-                cornerLabel(text: box.wrappedValue.children[0].name,
-                            active: hoverTarget == 0)
-                .position(x: 50, y: 40)
+                // 上
+                NavigationLink {
+                    WorkspaceView(path: path + [2], state: state)
+                } label: {
+                    cornerLabel(text: box.wrappedValue.children[2].name, active: hoverTarget == 2 )
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width / 2, y: 40)
                 
-                cornerLabel(text: box.wrappedValue.children[1].name,
-                            active: hoverTarget == 1)
-                .position(x: size.width - 50, y: 40)
+                // 下
+                NavigationLink {
+                    WorkspaceView(path: path + [3], state: state)
+                } label: {
+                    cornerLabel(text: box.wrappedValue.children[3].name, active: hoverTarget == 3 )
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width / 2, y: size.height - 150)
                 
-                cornerLabel(text: box.wrappedValue.children[2].name,
-                            active: hoverTarget == 2)
-                .position(x: 50, y: size.height - 40)
+                // 左
+                NavigationLink {
+                    WorkspaceView(path: path + [0], state: state)
+                } label: {
+                    cornerLabel(text: box.wrappedValue.children[0].name, active: hoverTarget == 0 )
+                }
+                .buttonStyle(.plain)
+                .position(x: 50, y: size.height / 2)
                 
-                cornerLabel(text: box.wrappedValue.children[3].name,
-                            active: hoverTarget == 3)
-                .position(x: size.width - 50, y: size.height - 40)
+                // 右
+                NavigationLink {
+                    WorkspaceView(path: path + [1], state: state)
+                } label: {
+                    cornerLabel(text: box.wrappedValue.children[1].name, active: hoverTarget == 1 )
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width - 50, y: size.height / 2)
             }
         }
-        .allowsHitTesting(false)
     }
     
     private func onDrop(cardID: UUID, translation: CGSize, box: Binding<Box>, size: CGSize) {
