@@ -340,6 +340,7 @@ struct WorkspaceView: View {
         .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity, alignment: .center)
         .frame(maxHeight: .infinity, alignment: .bottom)
     }
     
