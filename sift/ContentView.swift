@@ -87,6 +87,8 @@ final class AppState: ObservableObject {
         // Root has two child boxes A/B (like your current app)
         let boxA = Box(name: "A")
         let boxB = Box(name: "B")
+        let boxC = Box(name: "C")
+        let boxD = Box(name: "D")
         
         return Box(
             name: "Workspace",
@@ -95,7 +97,7 @@ final class AppState: ObservableObject {
                 Card(text: "Drop into A / B (bottom circles)", px: 0.48, py: 0.36),
                 Card(text: "Use the input bar to create new cards", px: 0.55, py: 0.50)
             ],
-            children: [boxA, boxB]
+            children: [boxA, boxB, boxC, boxD]
         )
     }
     
@@ -151,6 +153,8 @@ struct WorkspaceView: View {
                 // 1) Desk: scattered cards
                 cardBoard(box: box, size: size)
                 
+                cornerLabels(box: box, size: size)
+                
                 // 2) Dock (A/B circles) only if this box has children
                 if box.wrappedValue.children.count >= 2 {
                     boxDock(box: box, size: size)
@@ -180,7 +184,8 @@ struct WorkspaceView: View {
     
     private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
-            ForEach(box.wrappedValue.cards) { card in
+            ForEach(box.wrappedValue.cards.indices, id: \.self) { i in
+                let card = box.wrappedValue.cards[i]
                 let x = CGFloat(card.px) * size.width
                 let y = CGFloat(card.py) * size.height
                 
@@ -221,60 +226,23 @@ struct WorkspaceView: View {
             .scaleEffect(isDragging ? 1.03 : 1.0)
     }
     
-    // MARK: - Drop logic
+    private func targetIndex(from t: CGSize, threshold: CGFloat = 120) -> Int? {
+        let dx = t.width
+        let dy = t.height
     
-    private func onDrop(cardID: UUID, translation: CGSize, box: Binding<Box>, size: CGSize) {
-        var b = box.wrappedValue
-        guard let idx = b.cards.firstIndex(where: { $0.id == cardID }) else { return }
+        // 斜めだけ確定（誤爆防止）
+        let xOK = abs(dx) >= threshold
+        let yOK = abs(dy) >= threshold
+        guard xOK && yOK else { return nil }
         
-        // current normalized -> absolute
-        let cur = b.cards[idx]
-        let curX = CGFloat(cur.px) * size.width
-        let curY = CGFloat(cur.py) * size.height
-        
-        // new absolute position
-        let newX = curX + translation.width
-        let newY = curY + translation.height
-        let p = CGPoint(x: newX, y: newY)
-        
-        // dock centers
-        let dockY = size.height - 110
-        let leftCenter  = CGPoint(x: 110, y: dockY)
-        let rightCenter = CGPoint(x: size.width - 110, y: dockY)
-        let r: CGFloat = 70
-        
-        func inside(_ p: CGPoint, _ c: CGPoint) -> Bool {
-            let dx = p.x - c.x
-            let dy = p.y - c.y
-            return (dx*dx + dy*dy) <= r*r
-        }
-        
-        // if dropped into a child box: move card
-        if b.children.count >= 2 {
-            if inside(p, leftCenter) {
-                let moved = b.cards.remove(at: idx)
-                b.children[0].cards.append(moved)
-                box.wrappedValue = b
-                haptic.impactOccurred()
-                return
-            }
-            if inside(p, rightCenter) {
-                let moved = b.cards.remove(at: idx)
-                b.children[1].cards.append(moved)
-                box.wrappedValue = b
-                haptic.impactOccurred()
-                return
-            }
-        }
-        
-        // otherwise: update position (clamp to desk area)
-        let clampedX = min(max(newX, 30), size.width - 30)
-        let clampedY = min(max(newY, 30), size.height - 200) // keep above input bar zone
-        
-        b.cards[idx].px = Double(clampedX / size.width)
-        b.cards[idx].py = Double(clampedY / size.height)
-        box.wrappedValue = b
+        // iOS座標: 上はdyがマイナス
+        if dx < 0 && dy < 0 { return 0 } // 左上 = children[0]
+        if dx > 0 && dy < 0 { return 1 } // 右上 = children[1]
+        if dx < 0 && dy > 0 { return 2 } // 左下 = children[2]
+        return 3                          // 右下 = children[3]
     }
+    
+    // MARK: - Drop logic
     
     // MARK: - Dock (A/B)
     
@@ -399,6 +367,20 @@ struct WorkspaceView: View {
         var child = box.children[first]
         setBox(&child, path: Array(path.dropFirst()), newValue: newValue)
         box.children[first] = child
+    }
+    
+    private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
+        ZStack {
+            if box.wrappedValue.children.count >= 4 {
+                Text(box.wrappedValue.children[0].name).position(x: 40, y: 30) // 左上
+                Text(box.wrappedValue.children[1].name).position(x: size.width - 40, y: 30) // 右上
+                Text(box.wrappedValue.children[2].name).position(x: 40, y: size.height - 30) // 左下
+                Text(box.wrappedValue.children[3].name).position(x: size.width - 40, y: size.height - 30) // 右下
+            }
+        }
+        .font(.caption).bold()
+        .foregroundStyle(.white.opacity(0.8))
+        .allowsHitTesting(false)
     }
 }
 
