@@ -226,6 +226,7 @@ struct WorkspaceView: View {
                             .onEnded { value in
                                 onDrop(cardID: card.id, translation: value.translation, predicted: value.predictedEndTranslation, box: box, size: size)
                                 draggingID = nil
+                                dragBase = nil
                                 hoverTarget = nil
                             }
                     )
@@ -443,39 +444,18 @@ struct WorkspaceView: View {
     }
     
     private func onDrop(cardID: UUID, translation: CGSize, predicted: CGSize, box: Binding<Box>, size: CGSize) {
-        var b = box.wrappedValue
+        let b = box.wrappedValue
         guard let idx = b.cards.firstIndex(where: { $0.id == cardID }) else { return }
-        
-        // 現在の位置（正規化→絶対座標）
-        let cur = b.cards[idx]
-        let curX = CGFloat(cur.px) * size.width
-        let curY = CGFloat(cur.py) * size.height
-        
-        // ドロップ位置（見た目の最終位置）
-        let dropX = curX + translation.width
-        let dropY = curY + translation.height
-        
-        // 机上の範囲にクランプ
-        let clampedX = min(max(dropX, 30), size.width - 30)
-        let clampedY = min(max(dropY, 30), size.height - 200)
-        
-        // まず“今の位置”を px/py に焼き込む（ここはアニメ無し）
-        b.cards[idx].px = Double(clampedX / size.width)
-        b.cards[idx].py = Double(clampedY / size.height)
-        
+       
         // フリック判定（勢いがある時だけ吸い込む）
         let boostX = abs(predicted.width - translation.width)
         let boostY = abs(predicted.height - translation.height)
         let isFlick = max(boostX, boostY) > 260  // ←吸われすぎるなら増やす（例: 320）
         
-        // ① フリック & 方向が取れたら「吸い込み」
-        if b.children.count >= 4,
-           isFlick,
-           let tIndex = targetIndex(from: predicted) {
-
-            // いったん焼き込み状態を反映（見た目の“戻り”防止）
-            box.wrappedValue = b
-
+        guard b.children.count >= 4, isFlick, let tIndex = targetIndex(from: predicted) else {
+            return
+        }
+            
             // 画面外へ飛ばす（吸い込み）
             let out = offscreenNormalizedPosition(from: b.cards[idx], target: tIndex)
 
@@ -502,15 +482,8 @@ struct WorkspaceView: View {
                 // children が減ってたら保険（事故防止）
                 guard b2.children.indices.contains(tIndex) else { return }
                 b2.children[tIndex].cards.append(moved)
-
                 box.wrappedValue = b2
             }
-
-            return
-        }
-        
-        // ② フリックじゃないなら「机上で移動」だけ
-        box.wrappedValue = b
     }
     
     private func offscreenNormalizedPosition(from card: Card, target: Int) -> (px: Double, py: Double) {
