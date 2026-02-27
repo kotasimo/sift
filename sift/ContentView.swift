@@ -9,7 +9,6 @@ import SwiftUI
 import Foundation
 import Combine
 import UIKit
-import UIKit
 
 // =====================
 // Models
@@ -134,6 +133,7 @@ struct WorkspaceView: View {
     
     // dragging
     @State private var draggingID: UUID? = nil
+    @State private var hoverTarget: Int? = nil
     @State private var dragOffset: CGSize = .zero
     
     @FocusState private var inputFocused: Bool
@@ -198,15 +198,19 @@ struct WorkspaceView: View {
                             .onChanged { value in
                                 draggingID = card.id
                                 dragOffset = value.translation
+                                
+                                hoverTarget = targetIndex(from: value.translation)
                             }
                             .onEnded { value in
                                 onDrop(cardID: card.id, translation: value.translation, box: box, size: size)
                                 draggingID = nil
                                 dragOffset = .zero
+                                hoverTarget = nil
                             }
                     )
             }
         }
+        .animation(nil, value: draggingID)
     }
     
     private func cardView(text: String, isDragging: Bool) -> some View {
@@ -222,8 +226,9 @@ struct WorkspaceView: View {
                     .padding(14)
             )
             .frame(width: 260, height: 140)
-            .shadow(radius: isDragging ? 5 : 6, y: isDragging ? 5 : 4)
+            .shadow(radius: isDragging ? 5 : 6, x: 0, y: isDragging ? 5 : 4)
             .scaleEffect(isDragging ? 1.03 : 1.0)
+            .drawingGroup()
     }
     
     private func targetIndex(from t: CGSize, threshold: CGFloat = 120) -> Int? {
@@ -372,15 +377,69 @@ struct WorkspaceView: View {
     private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
             if box.wrappedValue.children.count >= 4 {
-                Text(box.wrappedValue.children[0].name).position(x: 40, y: 30) // 左上
-                Text(box.wrappedValue.children[1].name).position(x: size.width - 40, y: 30) // 右上
-                Text(box.wrappedValue.children[2].name).position(x: 40, y: size.height - 30) // 左下
-                Text(box.wrappedValue.children[3].name).position(x: size.width - 40, y: size.height - 30) // 右下
+                cornerLabel(text: box.wrappedValue.children[0].name,
+                            active: hoverTarget == 0)
+                .position(x: 50, y: 40)
+                
+                cornerLabel(text: box.wrappedValue.children[1].name,
+                            active: hoverTarget == 1)
+                .position(x: size.width - 50, y: 40)
+                
+                cornerLabel(text: box.wrappedValue.children[2].name,
+                            active: hoverTarget == 2)
+                .position(x: 50, y: size.height - 40)
+                
+                cornerLabel(text: box.wrappedValue.children[3].name,
+                            active: hoverTarget == 3)
+                .position(x: size.width - 50, y: size.height - 40)
             }
         }
-        .font(.caption).bold()
-        .foregroundStyle(.white.opacity(0.8))
         .allowsHitTesting(false)
+    }
+    
+    private func onDrop(cardID: UUID, translation: CGSize, box: Binding<Box>, size: CGSize) {
+        var b = box.wrappedValue
+        guard let idx = b.cards.firstIndex(where: { $0.id == cardID }) else { return }
+
+        // 現在の位置（正規化→絶対座標）
+        let cur = b.cards[idx]
+        let curX = CGFloat(cur.px) * size.width
+        let curY = CGFloat(cur.py) * size.height
+
+        // 新しい位置（絶対座標）
+        let newX = curX + translation.width
+        let newY = curY + translation.height
+
+        // ① 方向で箱に投げ込む（斜めのみ確定）
+        if b.children.count >= 4, let tIndex = targetIndex(from: translation) {
+            let moved = b.cards.remove(at: idx)
+            b.children[tIndex].cards.append(moved)
+            box.wrappedValue = b
+            haptic.impactOccurred()
+            return
+        }
+
+        // ② 方向が確定しない時は「机上で移動」
+        let clampedX = min(max(newX, 30), size.width - 30)
+        let clampedY = min(max(newY, 30), size.height - 200)
+
+        b.cards[idx].px = Double(clampedX / size.width)
+        b.cards[idx].py = Double(clampedY / size.height)
+        box.wrappedValue = b
+    }
+    
+    private func cornerLabel(text: String, active: Bool) -> some View {
+        Text(text)
+            .font(.headline)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(active ? Color.white : Color.white.opacity(0.25))
+            )
+            .foregroundStyle(active ? .black : .white)
+            .scaleEffect(active ? 1.2 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: active)
     }
 }
 
