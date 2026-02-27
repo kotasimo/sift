@@ -144,40 +144,40 @@ struct WorkspaceView: View {
     var body: some View {
         let box = bindingBox(at: path)
         
-    ZStack {
-        Color.blue.opacity(0.35).ignoresSafeArea()
-        
-        GeometryReader { geo in
-            let size = geo.size
+        ZStack {
+            Color.blue.opacity(0.35).ignoresSafeArea()
             
-            ZStack {
-                // 1) Desk: scattered cards
-                cardBoard(box: box, size: size)
+            GeometryReader { geo in
+                let size = geo.size
                 
-                cornerLabels(box: box, size: size)
-                
-                // 2) Dock (A/B circles) only if this box has children
-//                if box.wrappedValue.children.count >= 2 {
-//                    boxDock(box: box, size: size)
-//                }
-                
-                // 3) Input bar (always)
-                inputBar(box: box)
-            }
-            .navigationTitle(box.wrappedValue.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        state.resetToDefaults()
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
+                ZStack {
+                    // 1) Desk: scattered cards
+                    cardBoard(box: box, size: size)
+                    
+                    cornerLabels(box: box, size: size)
+                    
+                    // 2) Dock (A/B circles) only if this box has children
+//                    if box.wrappedValue.children.count >= 2 {
+//                        boxDock(box: box, size: size)
+//                    }
+                    
+                    // 3) Input bar (always)
+                    inputBar(box: box)
+                }
+                .navigationTitle(box.wrappedValue.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            state.resetToDefaults()
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .accessibilityLabel("Reset")
                     }
-                    .accessibilityLabel("Reset")
                 }
             }
         }
-    }
     }
     
     // MARK: - Desk (cards)
@@ -200,33 +200,32 @@ struct WorkspaceView: View {
                                     draggingID = card.id
                                     dragBase = (px: card.px, py: card.py)
                                 }
-                        // target 判定は translation のままでOK
-                        hoverTarget = targetIndex(from: value.translation)
-                        
-                        // ここが核心：px/py を直接更新（アニメ無し）
-                        guard let base = dragBase else { return }
-                        
-                        let newX = CGFloat(base.px) * size.width + value.translation.width
-                        let newY = CGFloat(base.py) * size.height + value.translation.height
-                        
-                        let clampedX = min(max(newX, 30), size.width - 30)
-                        let clampedY = min(max(newY, 30), size.height - 200)
-                        
-                        var b = box.wrappedValue
-                        guard let idx = b.cards.firstIndex(where: { $0.id == card.id }) else { return }
-                        
-                        var tx = Transaction()
-                        tx.animation = nil
-                        withTransaction(tx) {
-                            b.cards[idx].px = Double(clampedX / size.width)
-                            b.cards[idx].py = Double(clampedY / size.height)
-                            box.wrappedValue = b
-                        }
-                     }
+                                // target 判定は translation のままでOK
+                                hoverTarget = targetIndex(from: value.translation)
+                                
+                                // ここが核心：px/py を直接更新（アニメ無し）
+                                guard let base = dragBase else { return }
+                                
+                                let newX = CGFloat(base.px) * size.width + value.translation.width
+                                let newY = CGFloat(base.py) * size.height + value.translation.height
+                                
+                                let clampedX = min(max(newX, 30), size.width - 30)
+                                let clampedY = min(max(newY, 30), size.height - 200)
+                                
+                                var b = box.wrappedValue
+                                guard let idx = b.cards.firstIndex(where: { $0.id == card.id }) else { return }
+                                
+                                var tx = Transaction()
+                                tx.animation = nil
+                                withTransaction(tx) {
+                                    b.cards[idx].px = Double(clampedX / size.width)
+                                    b.cards[idx].py = Double(clampedY / size.height)
+                                    box.wrappedValue = b
+                                }
+                             }
                             .onEnded { value in
-                                onDrop(cardID: card.id, translation: value.translation, box: box, size: size)
+                                onDrop(cardID: card.id, translation: value.translation, predicted: value.predictedEndTranslation, box: box, size: size)
                                 draggingID = nil
-                                dragBase = nil
                                 hoverTarget = nil
                             }
                     )
@@ -437,85 +436,80 @@ struct WorkspaceView: View {
         }
     }
     
-    private func onDrop(cardID: UUID, translation: CGSize, box: Binding<Box>, size: CGSize) {
+    private func isFlick(actual: CGSize, predicted: CGSize, minBoost: CGFloat = 140) -> Bool {
+        let dx = abs(predicted.width - actual.width)
+        let dy = abs(predicted.height - actual.height)
+        return max(dx, dy) > minBoost
+    }
+    
+    private func onDrop(cardID: UUID, translation: CGSize, predicted: CGSize, box: Binding<Box>, size: CGSize) {
         var b = box.wrappedValue
         guard let idx = b.cards.firstIndex(where: { $0.id == cardID }) else { return }
-
+        
         // 現在の位置（正規化→絶対座標）
         let cur = b.cards[idx]
         let curX = CGFloat(cur.px) * size.width
         let curY = CGFloat(cur.py) * size.height
-
-        // 新しい位置（絶対座標）
-        let newX = curX + translation.width
-        let newY = curY + translation.height
         
-        // ① 方向で箱に投げ込む（確定したら“吸い込み”）
-        if b.children.count >= 4, let tIndex = targetIndex(from: translation) {
-            
-            // 今見えてる“ドロップ位置”を絶対座標で作る
-            let dropX = curX + translation.width
-            let dropY = curY + translation.height
-            
-            // 机上の範囲にクランプ（いま机上移動で使ってるのと同じ思想）
-            let clampedX = min(max(dropX, 30), size.width - 30)
-            let clampedY = min(max(dropY, 30), size.height - 200)
-            
-            // ここが肝：アニメ無しで px/py を“今の位置”に合わせる
-            b.cards[idx].px = Double(clampedX / size.width)
-            b.cards[idx].py = Double(clampedY / size.height)
-            box.wrappedValue = b
-            
-            // a) まずカードを“画面外”へアニメ移動（吸い込みの見た目）
-            let out = offscreenNormalizedPosition(from: b.cards[idx], target: tIndex)
-            
-            var tx = Transaction()
-            tx.animation = nil
-            
-            withTransaction(tx) {
-                // 先に offset を殺す（=二重適用を防ぐ）
-                dragOffset = .zero
-                draggingID = nil
-                hoverTarget = nil
-                
-                // そのうえで “ドロップ位置” を px/py に焼き込む
-                b.cards[idx].px = Double(clampedX / size.width)
-                b.cards[idx].py = Double(clampedY / size.height)
-                box.wrappedValue = b
-            }
-            
-            withAnimation(.easeIn(duration: 0.18)) {
-                b.cards[idx].px = out.px
-                b.cards[idx].py = out.py
-                box.wrappedValue = b
-            }
-            
-            haptic.impactOccurred()
-            
-            // b) アニメ後に “ほんとに” 移動（ここで消えてOK）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                var b2 = box.wrappedValue
-                
-                guard let i2 = b2.cards.firstIndex(where: { $0.id == cardID }) else { return }
-                var moved = b2.cards.remove(at: i2)
-                
-                // 子Box側で出現位置を軽く整える（任意）
-                moved.px = 0.50
-                moved.py = 0.35
-                
-                b2.children[tIndex].cards.append(moved)
-                box.wrappedValue = b2
-            }
-            
-            return
-        }
-
-        // ② 方向が確定しない時は「机上で移動」
-        let clampedX = min(max(newX, 30), size.width - 30)
-        let clampedY = min(max(newY, 30), size.height - 200)
-
+        // ドロップ位置（見た目の最終位置）
+        let dropX = curX + translation.width
+        let dropY = curY + translation.height
+        
+        // 机上の範囲にクランプ
+        let clampedX = min(max(dropX, 30), size.width - 30)
+        let clampedY = min(max(dropY, 30), size.height - 200)
+        
+        // まず“今の位置”を px/py に焼き込む（ここはアニメ無し）
         b.cards[idx].px = Double(clampedX / size.width)
         b.cards[idx].py = Double(clampedY / size.height)
+        
+        // フリック判定（勢いがある時だけ吸い込む）
+        let boostX = abs(predicted.width - translation.width)
+        let boostY = abs(predicted.height - translation.height)
+        let isFlick = max(boostX, boostY) > 260  // ←吸われすぎるなら増やす（例: 320）
+        
+        // ① フリック & 方向が取れたら「吸い込み」
+        if b.children.count >= 4,
+           isFlick,
+           let tIndex = targetIndex(from: predicted) {
+
+            // いったん焼き込み状態を反映（見た目の“戻り”防止）
+            box.wrappedValue = b
+
+            // 画面外へ飛ばす（吸い込み）
+            let out = offscreenNormalizedPosition(from: b.cards[idx], target: tIndex)
+
+            withAnimation(.easeIn(duration: 0.20)) {
+                var b1 = box.wrappedValue
+                guard let i1 = b1.cards.firstIndex(where: { $0.id == cardID }) else { return }
+                b1.cards[i1].px = out.px
+                b1.cards[i1].py = out.py
+                box.wrappedValue = b1
+            }
+
+            haptic.impactOccurred()
+
+            // アニメ後に本当に移動
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+                var b2 = box.wrappedValue
+                guard let i2 = b2.cards.firstIndex(where: { $0.id == cardID }) else { return }
+
+                var moved = b2.cards.remove(at: i2)
+                // 子Box側の出現位置（好みで調整）
+                moved.px = 0.50
+                moved.py = 0.35
+
+                // children が減ってたら保険（事故防止）
+                guard b2.children.indices.contains(tIndex) else { return }
+                b2.children[tIndex].cards.append(moved)
+
+                box.wrappedValue = b2
+            }
+
+            return
+        }
+        
+        // ② フリックじゃないなら「机上で移動」だけ
         box.wrappedValue = b
     }
     
