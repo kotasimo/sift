@@ -8,6 +8,8 @@
 import SwiftUI
 import Foundation
 import Combine
+import UIKit
+import UIKit
 
 // =====================
 // Models
@@ -397,52 +399,6 @@ struct WorkspaceView: View {
         var child = box.children[first]
         setBox(&child, path: Array(path.dropFirst()), newValue: newValue)
         box.children[first] = child
-    }
-}
-
-struct DraggableCardView: View {
-    let card: Card
-    let size: CGSize
-
-    // 親から渡す：いま前面にしたいカードID
-    @Binding var activeID: UUID?
-    
-    // 親から渡す：ドロップ処理（座標更新/箱に入れる）
-    let onDrop: (UUID, CGSize) -> Void
-    
-    @State private var dragOffset: CGSize = .zero
-    
-    var body: some View {
-        let x = CGFloat(card.px) * size.width
-        let y = CGFloat(card.py) * size.height
-        let isActive = (activeID == card.id)
-        
-        RoundedRectangle(cornerRadius: 20)
-            .fill(.white)
-            .overlay(
-                Text(card.text)
-                    .font(.headline)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(14)
-            )
-            .frame(width: 260, height: 140)
-            .position(x: x, y: y)
-            .offset(isActive ? dragOffset : .zero)
-            .zIndex(isActive ? 10 : 0)
-            .shadow(radius: isActive ? 10 : 5, y: isActive ? 6 : 3) // 軽め推奨
-            .gesture(
-                DragGesture()
-                    .onChanged { v in
-                        activeID = card.id
-                        dragOffset = v.translation
-                    }
-                    .onEnded { v in
-                        onDrop(card.id, v.translation)
-                        dragOffset = .zero
-                        activeID = nil
-                    }
-            )
     }
 }
 
