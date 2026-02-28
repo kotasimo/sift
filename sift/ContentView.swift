@@ -142,7 +142,6 @@ struct WorkspaceView: View {
     // dragging
     @State private var draggingID: UUID? = nil
     @State private var hoverTarget: Int? = nil
-    @State private var dragOffset: CGSize = .zero
     @State private var dragBase: (px: Double, py: Double)? = nil
     @State private var showingRename = false
     @State private var draftNames: [String] = ["A", "B", "C", "D"]
@@ -296,7 +295,7 @@ struct WorkspaceView: View {
                                 hoverTarget = nil
                             }
                     )
-                simultaneousGesture(
+                    .simultaneousGesture(
                     TapGesture().onEnded {
                         // ✅ タップで裏返すだけ
                         if flipped.contains(card.id) { flipped.remove(card.id) }
@@ -685,43 +684,6 @@ struct RenameBoxesSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave() }
-                }
-            }
-        }
-    }
-}
-
-struct EditCardSheet: View {
-    @Binding var text: String
-    let onCancel: () -> Void
-    let onSave: () -> Void
-    let onDelete: () -> Void
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                TextEditor(text: $text)
-                    .padding(12)
-                    .background(.thinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .padding()
-                
-                Spacer()
-            }
-            .navigationTitle("Edit card")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { onCancel() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave() }
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
                 }
             }
         }
