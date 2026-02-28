@@ -136,8 +136,12 @@ struct WorkspaceView: View {
     @State private var hoverTarget: Int? = nil
     @State private var dragOffset: CGSize = .zero
     @State private var dragBase: (px: Double, py: Double)? = nil
+    @State private var showingRename = false
+    @State private var draftNames: [String] = ["A", "B", "C", "D"]
     
     @FocusState private var inputFocused: Bool
+    
+    enum EdgeSide { case top, bottom, left, right }
     
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
     
@@ -175,8 +179,39 @@ struct WorkspaceView: View {
                         }
                         .accessibilityLabel("Reset")
                     }
+                    
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            if state.root.children.count >= 4 {
+                                draftNames = (0..<4).map {state.root.children[$0].name}
+                            }
+                            showingRename = true
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        .accessibilityLabel("Rename boxes")
+                    }
                 }
             }
+        }
+        .sheet(isPresented: $showingRename) {
+            RenameBoxesSheet(
+                names: $draftNames,
+                onSave: {
+                    // 空白は弾く（or 元に戻す）
+                    for i in 0..<min(4, state.root.children.count) {
+                        let trimmed = draftNames[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            state.root.children[i].name = trimmed
+                        }
+                    }
+                    state.scheduleSave()
+                    showingRename = false
+                },
+                onCancel: {
+                    showingRename = false
+                }
+            )
         }
     }
     
@@ -348,7 +383,7 @@ struct WorkspaceView: View {
                 NavigationLink {
                     WorkspaceView(currentIndex: 2, state: state)
                 } label: {
-                    cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2 )
+                    cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2, side: .top)
                 }
                 .buttonStyle(.plain)
                 .position(x: size.width / 2, y: 40)
@@ -357,28 +392,28 @@ struct WorkspaceView: View {
                 NavigationLink {
                     WorkspaceView(currentIndex: 3, state: state)
                 } label: {
-                    cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3 )
+                    cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3, side: .bottom)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width / 2, y: size.height - 150)
+                .position(x: size.width / 2, y: size.height - 130)
                 
                 // 左
                 NavigationLink {
                     WorkspaceView(currentIndex: 0, state: state)
                 } label: {
-                    cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0 )
+                    cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0, side: .right)
                 }
                 .buttonStyle(.plain)
-                .position(x: 50, y: size.height / 2)
+                .position(x: 220, y: size.height / 2)
                 
                 // 右
                 NavigationLink {
                     WorkspaceView(currentIndex: 1, state: state)
                 } label: {
-                    cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1 )
+                    cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1, side: .left)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width - 50, y: size.height / 2)
+                .position(x: size.width - 220, y: size.height / 2)
             }
         }
     }
@@ -424,8 +459,8 @@ struct WorkspaceView: View {
             box.wrappedValue = from   // 画面側に反映（ここで消える）
                                                                 
             // 2) rootのターゲット箱へ入れる
-            moved.px = 0.50
-            moved.py = 0.35
+            moved.px = Double.random(in: 0.18...0.80)
+            moved.py = Double.random(in: 0.20...0.70)
             state.root.children[tIndex].cards.append(moved)
             state.scheduleSave()            }
     }
@@ -440,27 +475,81 @@ struct WorkspaceView: View {
         }
     }
     
-    private func cornerLabel(text: String, active: Bool) -> some View {
-        Text(text)
-            .font(.headline)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(active ? Color.white : Color.white.opacity(0.25))
-            )
-            .foregroundStyle(active ? .black : .white)
-            .scaleEffect(active ? 1.2 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: active)
-    }
-    private func tiltDegrees(from t: CGSize) -> Double {
-        let dx = Double(t.width)
-        let normalized = max(-1, min(1, dx / 140.0))
-        let base = normalized * 10.0
-        let boost = (hoverTarget == 0 || hoverTarget == 1) ? 4.0 : 0.0
+    private func cornerLabel(text: String, active: Bool, side: EdgeSide) -> some View {
         
-        // 左ならマイナス、右ならプラスに自然に足す
-        return base + (normalized >= 0 ? boost : -boost)
+        let isVertical = (side == .left || side == .right)
+        
+        return ZStack {
+            
+            // ドロップ領域
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Color.white.opacity(active ? 0.28 : 0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28)
+                        .stroke(Color.white.opacity(active ? 0.85 : 0.35), lineWidth: active ? 3 : 1.5)
+                )
+                .shadow(color: .white.opacity(active ? 0.7 : 0.25),
+                        radius: active ? 16 : 8)
+            
+            // 名前
+            Text(text)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.95))
+                .rotationEffect(.degrees(side == .left ? 90 :
+                                            side == .right ? -90 : 0))
+                .padding(16)
+        }
+        .frame(
+            width: isVertical ? 110 : 420,
+            height: isVertical ? 420 : 120
+        )
+    }
+}
+
+struct RenameBoxesSheet: View {
+    @Binding var names: [String]
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(0..<4, id: \.self) { i in
+                    TextField("Name", text: Binding(
+                        get: { names.count > i ? names[i] : "" },
+                        set: { newValue in
+                            if names.count <= i {
+                                names += Array(repeating: "", count: i - names.count + 1)
+                            }
+                            names[i] = newValue
+                        }
+                    ))
+                }
+            }
+            .navigationTitle("Rename boxes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave() }
+                }
+            }
+        }
+    }
+}
+
+struct CloudPocketShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        
+        path.addEllipse(in: CGRect(x: w*0.05, y: h*0.35, width: w*0.45, height: h*0.55))
+        path.addEllipse(in: CGRect(x: w*0.35, y: h*0.15, width: w*0.45, height: h*0.65))
+        path.addEllipse(in: CGRect(x: w*0.60, y: h*0.40, width: w*0.35, height: h*0.50))
+        
+        return path
     }
 }
 
