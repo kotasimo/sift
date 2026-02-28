@@ -16,7 +16,8 @@ import UIKit
 
 struct Card: Identifiable, Codable, Equatable {
     var id = UUID()
-    var text: String
+    var front: String
+    var back: String
     // normalized position (0...1)
     var px: Double
     var py: Double
@@ -92,9 +93,9 @@ final class AppState: ObservableObject {
         return Box(
             name: "Workspace",
             cards: [
-                Card(text: "Drag cards around", px: 0.52, py: 0.22),
-                Card(text: "Drop into A / B (bottom circles)", px: 0.48, py: 0.36),
-                Card(text: "Use the input bar to create new cards", px: 0.55, py: 0.50)
+                Card(front: "Tap to flip", back: "裏面だよ", px: 0.52, py: 0.22),
+                Card(front: "Drag to sort", back: "Flick hard to send", px: 0.48, py: 0.36),
+                Card(front: "Add cards below", back: "Back can be empty", px: 0.55, py: 0.50)
             ],
             children: [boxA, boxB, boxC, boxD]
         )
@@ -145,16 +146,12 @@ struct WorkspaceView: View {
     @State private var dragBase: (px: Double, py: Double)? = nil
     @State private var showingRename = false
     @State private var draftNames: [String] = ["A", "B", "C", "D"]
-    @State private var editingID: UUID? = nil
-    @State private var editingText: String = ""
-    @State private var showingEdit: Bool = false
-    @State private var confirmDelete = false
     // --- camera (workspace) ---
     @State private var canvasPan: CGSize = .zero
     @State private var panStart: CGSize = .zero
-    
     @State private var canvasScale: CGFloat = 1.0
     @State private var scaleStart: CGFloat = 1.0
+    @State private var flipped: Set<UUID> = []
     
     @FocusState private var inputFocused: Bool
     
@@ -239,35 +236,6 @@ struct WorkspaceView: View {
                 }
             )
         }
-        .sheet(isPresented: $showingEdit) {
-            EditCardSheet(
-                text: $editingText,
-                onCancel: { showingEdit = false },
-                onSave: {
-                    let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard let id = editingID, !trimmed.isEmpty else { showingEdit = false; return }
-                    var b = box.wrappedValue
-                    if let idx = b.cards.firstIndex(where: { $0.id == id }) {
-                        b.cards[idx].text = trimmed
-                        box.wrappedValue = b
-                    }
-                    showingEdit = false
-                },
-                onDelete: { confirmDelete = true }
-            )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
-            .confirmationDialog("Delete this card?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("Delete", role: .destructive) {
-                    guard let id = editingID else { return }
-                    var b = box.wrappedValue
-                    b.cards.removeAll { $0.id == id }
-                    box.wrappedValue = b
-                    showingEdit = false
-                }
-                Button("Cancel", role: .cancel) { }
-            }
-        }
         .onAppear {
             panStart = canvasPan
             scaleStart = canvasScale
@@ -278,13 +246,13 @@ struct WorkspaceView: View {
     
     private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
-            ForEach(box.wrappedValue.cards.indices, id: \.self) { i in
+            ForEach(Array(box.wrappedValue.cards.indices), id: \.self) { i in
                 let card = box.wrappedValue.cards[i]
                 let x = CGFloat(card.px) * size.width
                 let y = CGFloat(card.py) * size.height
                 let tint = tintForCurrentBox()
                 
-                cardView(text: card.text, isDragging: draggingID == card.id, tint: tint)
+                cardView(front: card.front, back: card.back, isDragging: draggingID == card.id, isFlipped: flipped.contains(card.id), tint: tint)
                     .zIndex(draggingID == card.id ? 10 : 0)
                     .position(x: x, y: y)
                     .gesture(
@@ -328,53 +296,75 @@ struct WorkspaceView: View {
                                 hoverTarget = nil
                             }
                     )
-                    .simultaneousGesture(
-                        TapGesture().onEnded {
-                            editingID = card.id
-                            editingText = card.text
-                            showingEdit = true
-                            inputFocused = false
-                        }
-                    )
-
+                simultaneousGesture(
+                    TapGesture().onEnded {
+                        // ✅ タップで裏返すだけ
+                        if flipped.contains(card.id) { flipped.remove(card.id) }
+                        else { flipped.insert(card.id) }
+                        inputFocused = false
+                    }
+                )
             }
         }
         .animation(nil, value: draggingID)
     }
     
-    private func cardView(text: String, isDragging: Bool, tint: Color?) -> some View {
-        
+    private func cardView(
+        front: String,
+        back: String,
+        isDragging: Bool,
+        isFlipped: Bool,
+        tint: Color?
+    ) -> some View {
         let t = tint
-        
         let base: Color = {
             guard let t = t else { return .white }
             return t.opacity(0.25)
         }()
         
-        return RoundedRectangle(cornerRadius: 20)
-            .fill(base)
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke((t ?? .clear).opacity(t == nil ? 0.0 : 0.45), lineWidth: 2)   // ← 枠で“所属感”
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
-                    .blur(radius: 0.5)
-            )
-        
-            .overlay(
-                Text(text)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(12)
-            )
-            .frame(width: 230, height: 125)
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
-            .scaleEffect(isDragging ? 1.03 : 1.0)
+        return ZStack {
+            // ===== 表 =====
+            RoundedRectangle(cornerRadius: 20)
+                .fill(base)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke((t ?? .clear).opacity(t == nil ? 0.0 : 0.45), lineWidth: 2)
+                )
+                .overlay(
+                    Text(front)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(12)
+                )
+                .opacity(isFlipped ? 0 : 1)
+            
+            // ===== 裏 =====
+            RoundedRectangle(cornerRadius: 20)
+                .fill(base.opacity(0.90))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke((t ?? .clear).opacity(t == nil ? 0.0 : 0.35), lineWidth: 2)
+                )
+                .overlay(
+                    Text(back.isEmpty ? " " : back) // 空なら何も出さない（見た目用）
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(12)
+                )
+                .opacity(isFlipped ? 1 : 0)
+                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+        }
+        .frame(width: 230, height: 125)
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
+        .scaleEffect(isDragging ? 1.03 : 1.0)
+        .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0))
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isFlipped)
     }
     
     private func targetIndex(from t: CGSize, threshold: CGFloat = 120) -> Int? {
@@ -434,12 +424,12 @@ struct WorkspaceView: View {
         
         var b = box.wrappedValue
         
-        // spawn around upper-middle
         let px = min(max(0.5 + Double.random(in: -0.14...0.14), 0.08), 0.92)
         let py = min(max(0.35 + Double.random(in: -0.10...0.10), 0.08), 0.80)
         
-        b.cards.append(Card(text: trimmed, px: px, py: py))
+        b.cards.append(Card(front: trimmed, back: "", px: px, py: py))
         box.wrappedValue = b
+        
         draftText = ""
         haptic.impactOccurred()
     }
