@@ -386,7 +386,7 @@ struct WorkspaceView: View {
                     cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2, side: .top)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width / 2, y: 40)
+                .position(x: size.width / 2, y: 50)
                 
                 // 下
                 NavigationLink {
@@ -395,7 +395,7 @@ struct WorkspaceView: View {
                     cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3, side: .bottom)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width / 2, y: size.height - 130)
+                .position(x: size.width / 2, y: size.height - 150)
                 
                 // 左
                 NavigationLink {
@@ -404,7 +404,7 @@ struct WorkspaceView: View {
                     cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0, side: .right)
                 }
                 .buttonStyle(.plain)
-                .position(x: 220, y: size.height / 2)
+                .position(x: 70, y: size.height / 2)
                 
                 // 右
                 NavigationLink {
@@ -413,7 +413,7 @@ struct WorkspaceView: View {
                     cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1, side: .left)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width - 220, y: size.height / 2)
+                .position(x: size.width - 70, y: size.height / 2)
             }
         }
     }
@@ -478,18 +478,23 @@ struct WorkspaceView: View {
     private func cornerLabel(text: String, active: Bool, side: EdgeSide) -> some View {
         
         let isVertical = (side == .left || side == .right)
+        let c = boxColor(for: side)
+        let lift: CGFloat = active ? -6 : 0
         
         return ZStack {
-            
             // ドロップ領域
             RoundedRectangle(cornerRadius: 28)
-                .fill(Color.white.opacity(active ? 0.28 : 0.12))
+                .fill(c.opacity(active ? 0.28 : 0.12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 28)
-                        .stroke(Color.white.opacity(active ? 0.85 : 0.35), lineWidth: active ? 3 : 1.5)
+                        .stroke(c.opacity(active ? 0.85 : 0.35), lineWidth: active ? 3 : 1.5)
                 )
-                .shadow(color: .white.opacity(active ? 0.7 : 0.25),
-                        radius: active ? 16 : 8)
+                .offset(y: lift)
+                .shadow(color: c.opacity(active ? 0.7 : 0.25),
+                        radius: active ? 16 : 8, x: 0, y: active ? 14 : 4)
+                .shadow(color: Color.white.opacity(active ? 0.6 : 0.0), radius: active ? 18 : 0)
+                .scaleEffect(active ? 1.035 : 1.0)
+                .animation(.spring(response: 0.28, dampingFraction: 0.78), value: active)
             
             // 名前
             Text(text)
@@ -503,6 +508,15 @@ struct WorkspaceView: View {
             width: isVertical ? 110 : 420,
             height: isVertical ? 420 : 120
         )
+    }
+    
+    private func boxColor(for side: EdgeSide) -> Color {
+        switch side {
+        case .left:   return .cyan      // A
+        case .right:  return .orange    // B
+        case .top:    return .purple    // C
+        case .bottom: return .green     // D
+        }
     }
 }
 
