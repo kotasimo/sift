@@ -168,9 +168,6 @@ struct WorkspaceView: View {
         ZStack {
             Color.yellow.opacity(0.5).ignoresSafeArea()
             
-            canvasBackground()
-                .ignoresSafeArea()
-            
             GeometryReader { geo in
                 let size = geo.size
                 
@@ -178,21 +175,18 @@ struct WorkspaceView: View {
                     // ===== (A) 動くレイヤー：巨大背景 + カード =====
                     ZStack {
                         Rectangle()
-                            .fill(Color.blue.opacity(0.18))
+                            .fill(Color(red: 0.94, green: 0.96, blue: 0.98))
                             .frame(width: size.width * 4, height: size.height * 4)
                             .position(x: size.width / 2, y: size.height / 2)
+                            .contentShape(Rectangle())
+                            .gesture(panGesture())
+                            .simultaneousGesture(zoomGesture())
                         
                         cardBoard(box: bindingBox(), size: size)
                     }
                     .scaleEffect(canvasScale)
                     .offset(canvasPan)
-                    
-                    // ===== (B) ジェスチャーを受ける透明板（固定） =====
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .gesture(panGesture())
-                        .simultaneousGesture(zoomGesture())
-                    
+
                     // ===== (C) 固定HUD：箱 + 入力 =====
                     cornerLabels(box: bindingBox(), size: size)
                     inputBar(box: bindingBox())
@@ -639,39 +633,6 @@ struct WorkspaceView: View {
             return Color.blue.opacity(0.25)   // root は薄い青
         }
         return boxColor(forIndex: i).opacity(0.85)
-    }
-    
-    private func canvasBackground() -> some View {
-        Rectangle()
-            .fill(Color.blue.opacity(0.35))
-            .contentShape(Rectangle()) // 空白でもタッチを拾う
-        // --- PAN (1本指) ---
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        // カードを掴んでないときだけパン
-                        guard draggingID == nil else { return }
-                        canvasPan = CGSize(
-                            width: panStart.width + value.translation.width,
-                            height: panStart.height + value.translation.height
-                        )
-                    }
-                    .onEnded { _ in
-                        panStart = canvasPan
-                    }
-            )
-        // --- ZOOM (2本指ピンチ) ---
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { m in
-                        let next = scaleStart * m
-                        // だいたいの範囲に制限
-                        canvasScale = min(max(next, 0.4), 1.0)
-                    }
-                    .onEnded { _ in
-                        scaleStart = canvasScale
-                    }
-            )
     }
     
     private func panGesture() -> some Gesture {
