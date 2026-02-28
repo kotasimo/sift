@@ -138,6 +138,10 @@ struct WorkspaceView: View {
     @State private var dragBase: (px: Double, py: Double)? = nil
     @State private var showingRename = false
     @State private var draftNames: [String] = ["A", "B", "C", "D"]
+    @State private var editingID: UUID? = nil
+    @State private var editingText: String = ""
+    @State private var showingEdit: Bool = false
+    @State private var confirmDelete = false
     
     @FocusState private var inputFocused: Bool
     
@@ -213,6 +217,35 @@ struct WorkspaceView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingEdit) {
+            EditCardSheet(
+                text: $editingText,
+                onCancel: { showingEdit = false },
+                onSave: {
+                    let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard let id = editingID, !trimmed.isEmpty else { showingEdit = false; return }
+                    var b = box.wrappedValue
+                    if let idx = b.cards.firstIndex(where: { $0.id == id }) {
+                        b.cards[idx].text = trimmed
+                        box.wrappedValue = b
+                    }
+                    showingEdit = false
+                },
+                onDelete: { confirmDelete = true }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+            .confirmationDialog("Delete this card?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    guard let id = editingID else { return }
+                    var b = box.wrappedValue
+                    b.cards.removeAll { $0.id == id }
+                    box.wrappedValue = b
+                    showingEdit = false
+                }
+                Button("Cancel", role: .cancel) { }
+            }
+        }
     }
     
     // MARK: - Desk (cards)
@@ -223,8 +256,9 @@ struct WorkspaceView: View {
                 let card = box.wrappedValue.cards[i]
                 let x = CGFloat(card.px) * size.width
                 let y = CGFloat(card.py) * size.height
+                let tint = tintForCurrentBox()
                 
-                cardView(text: card.text, isDragging: draggingID == card.id)
+                cardView(text: card.text, isDragging: draggingID == card.id, tint: tint)
                     .zIndex(draggingID == card.id ? 10 : 0)
                     .position(x: x, y: y)
                     .gesture(
@@ -265,14 +299,41 @@ struct WorkspaceView: View {
                                 hoverTarget = nil
                             }
                     )
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            editingID = card.id
+                            editingText = card.text
+                            showingEdit = true
+                            inputFocused = false
+                        }
+                    )
+
             }
         }
         .animation(nil, value: draggingID)
     }
     
-    private func cardView(text: String, isDragging: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 20)
-            .fill(Color.white)
+    private func cardView(text: String, isDragging: Bool, tint: Color?) -> some View {
+        
+        let t = tint
+        
+        let base: Color = {
+            guard let t = t else { return .white }
+            return t.opacity(0.25)
+        }()
+        
+        return RoundedRectangle(cornerRadius: 20)
+            .fill(base)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke((t ?? .clear).opacity(t == nil ? 0.0 : 0.45), lineWidth: 2)   // ← 枠で“所属感”
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                    .blur(radius: 0.5)
+            )
+        
             .overlay(
                 Text(text)
                     .font(.headline)
@@ -283,7 +344,7 @@ struct WorkspaceView: View {
                     .padding(14)
             )
             .frame(width: 260, height: 140)
-            .shadow(radius: isDragging ? 5 : 6, y: isDragging ? 5 : 4)
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
             .scaleEffect(isDragging ? 1.03 : 1.0)
     }
     
@@ -376,47 +437,7 @@ struct WorkspaceView: View {
         )
     }
     
-    private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
-        ZStack {
-            if state.root.children.count >= 4 {
-                // 上
-                NavigationLink {
-                    WorkspaceView(currentIndex: 2, state: state)
-                } label: {
-                    cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2, side: .top)
-                }
-                .buttonStyle(.plain)
-                .position(x: size.width / 2, y: 50)
-                
-                // 下
-                NavigationLink {
-                    WorkspaceView(currentIndex: 3, state: state)
-                } label: {
-                    cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3, side: .bottom)
-                }
-                .buttonStyle(.plain)
-                .position(x: size.width / 2, y: size.height - 150)
-                
-                // 左
-                NavigationLink {
-                    WorkspaceView(currentIndex: 0, state: state)
-                } label: {
-                    cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0, side: .right)
-                }
-                .buttonStyle(.plain)
-                .position(x: 70, y: size.height / 2)
-                
-                // 右
-                NavigationLink {
-                    WorkspaceView(currentIndex: 1, state: state)
-                } label: {
-                    cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1, side: .left)
-                }
-                .buttonStyle(.plain)
-                .position(x: size.width - 70, y: size.height / 2)
-            }
-        }
-    }
+    
     
     private func isFlick(actual: CGSize, predicted: CGSize, minBoost: CGFloat = 140) -> Bool {
         let dx = abs(predicted.width - actual.width)
@@ -475,19 +496,19 @@ struct WorkspaceView: View {
         }
     }
     
-    private func cornerLabel(text: String, active: Bool, side: EdgeSide) -> some View {
+    private func cornerLabel(text: String, active: Bool, side: EdgeSide, index: Int) -> some View {
         
         let isVertical = (side == .left || side == .right)
-        let c = boxColor(for: side)
+        let c = boxColor(forIndex: index)
         let lift: CGFloat = active ? -6 : 0
         
         return ZStack {
             // ドロップ領域
             RoundedRectangle(cornerRadius: 28)
-                .fill(c.opacity(active ? 0.28 : 0.12))
+                .fill(c.opacity(active ? 0.50 : 0.3))
                 .overlay(
                     RoundedRectangle(cornerRadius: 28)
-                        .stroke(c.opacity(active ? 0.85 : 0.35), lineWidth: active ? 3 : 1.5)
+                        .stroke(c.opacity(active ? 0.85 : 1.0), lineWidth: active ? 3 : 1.5)
                 )
                 .offset(y: lift)
                 .shadow(color: c.opacity(active ? 0.7 : 0.25),
@@ -499,7 +520,7 @@ struct WorkspaceView: View {
             // 名前
             Text(text)
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.95))
+                .foregroundStyle(.black.opacity(0.95))
                 .rotationEffect(.degrees(side == .left ? 90 :
                                             side == .right ? -90 : 0))
                 .padding(16)
@@ -510,14 +531,70 @@ struct WorkspaceView: View {
         )
     }
     
-    private func boxColor(for side: EdgeSide) -> Color {
-        switch side {
-        case .left:   return .cyan      // A
-        case .right:  return .orange    // B
-        case .top:    return .purple    // C
-        case .bottom: return .green     // D
+    private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
+        ZStack {
+            if state.root.children.count >= 4 {
+                // 上
+                NavigationLink {
+                    WorkspaceView(currentIndex: 2, state: state)
+                } label: {
+                    cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2, side: .top, index: 2)
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width / 2, y: 50)
+                
+                // 下
+                NavigationLink {
+                    WorkspaceView(currentIndex: 3, state: state)
+                } label: {
+                    cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3, side: .bottom, index: 3)
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width / 2, y: size.height - 150)
+                
+                // 左
+                NavigationLink {
+                    WorkspaceView(currentIndex: 0, state: state)
+                } label: {
+                    cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0, side: .right, index: 0)
+                }
+                .buttonStyle(.plain)
+                .position(x: 70, y: size.height / 2)
+                
+                // 右
+                NavigationLink {
+                    WorkspaceView(currentIndex: 1, state: state)
+                } label: {
+                    cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1, side: .left, index: 1)
+                }
+                .buttonStyle(.plain)
+                .position(x: size.width - 70, y: size.height / 2)
+            }
         }
     }
+    
+    private func boxColor(forIndex i: Int) -> Color {
+        switch i {
+        case 0:   return .cyan      // A
+        case 1:  return .orange    // B
+        case 2:    return .purple    // C
+        case 3: return .green     // D
+        default: return .gray
+        }
+    }
+    
+    private func tintForCurrentBox() -> Color? {
+        guard let i = currentIndex else { return nil } // rootは無色
+        switch i {
+        case 0: return .cyan
+        case 1: return .orange
+        case 2: return .purple
+        case 3: return .green
+        default: return nil
+        }
+    }
+    
+    
 }
 
 struct RenameBoxesSheet: View {
@@ -547,6 +624,43 @@ struct RenameBoxesSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave() }
+                }
+            }
+        }
+    }
+}
+
+struct EditCardSheet: View {
+    @Binding var text: String
+    let onCancel: () -> Void
+    let onSave: () -> Void
+    let onDelete: () -> Void
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                TextEditor(text: $text)
+                    .padding(12)
+                    .background(.thinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .padding()
+                
+                Spacer()
+            }
+            .navigationTitle("Edit card")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave() }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
         }
