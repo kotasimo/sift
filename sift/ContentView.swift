@@ -151,8 +151,13 @@ struct WorkspaceView: View {
     @State private var canvasScale: CGFloat = 1.0
     @State private var scaleStart: CGFloat = 1.0
     @State private var flipped: Set<UUID> = []
+    @State private var draftFront = ""
+    @State private var draftBack = ""
+    @State private var activeCardID: UUID? = nil
+    @State private var draftText: String = ""
     
-    @FocusState private var inputFocused: Bool
+    enum Field { case front, back }
+    @FocusState private var focusedField: Field?
     
     enum EdgeSide { case top, bottom, left, right }
     
@@ -245,7 +250,7 @@ struct WorkspaceView: View {
     
     private func cardBoard(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
-            ForEach(Array(box.wrappedValue.cards.indices), id: \.self) { i in
+            ForEach(box.wrappedValue.cards.indices, id: \.self) { i in
                 let card = box.wrappedValue.cards[i]
                 let x = CGFloat(card.px) * size.width
                 let y = CGFloat(card.py) * size.height
@@ -289,6 +294,8 @@ struct WorkspaceView: View {
                                 }
                              }
                             .onEnded { value in
+                                activeCardID = nil
+                                inputFocused = false
                                 onDrop(cardID: card.id, translation: value.translation, predicted: value.predictedEndTranslation, box: box, size: size)
                                 draggingID = nil
                                 dragBase = nil
@@ -296,13 +303,17 @@ struct WorkspaceView: View {
                             }
                     )
                     .simultaneousGesture(
-                    TapGesture().onEnded {
-                        // ✅ タップで裏返すだけ
-                        if flipped.contains(card.id) { flipped.remove(card.id) }
-                        else { flipped.insert(card.id) }
-                        inputFocused = false
-                    }
-                )
+                        TapGesture().onEnded {
+                            // 入力対象をそのカードに
+                            activeCardID = card.id
+                            // 裏返す（向きを保持）
+                            if flipped.contains(card.id) { flipped.remove(card.id) }
+                            else { flipped.insert(card.id) }
+                            
+                            // キーボード出す
+                            inputFocused = true
+                        }
+                    )
             }
         }
         .animation(nil, value: draggingID)
@@ -382,31 +393,29 @@ struct WorkspaceView: View {
         }
     }
     
-    
-    // MARK: - Input bar
-    
     private func inputBar(box: Binding<Box>) -> some View {
-        HStack(spacing: 12) {
-            TextField("テキスト入力", text: $draftText, axis: .vertical)
-                .focused($inputFocused)
-                .lineLimit(1...3)
-                .textFieldStyle(.roundedBorder)
+        VStack(spacing: 10) {
+            let canType = (activeCardID != nil)
             
-                .toolbar{
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("done") {inputFocused = false}
-                    }
+            TextField(canType ? (isBack(activeCardID!) ? "裏に入力" : "表に入力") : "＋でカード作成",
+                      text: activeTextBinding(box: box),
+                      axis: .vertical)
+            .focused($inputFocused)
+            .lineLimit(1...3)
+            .textFieldStyle(.roundedBorder)
+            .disabled(!canType)
+            .opacity(canType ? 1.0 : 0.55)
+            
+            HStack {
+                Spacer()
+                Button {
+                    addCard(box: box)
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
                 }
-            
-            Button {
-                addCard(box: box)
-            } label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add card")
         }
         .zIndex(1000)
         .padding(14)
@@ -415,24 +424,33 @@ struct WorkspaceView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, alignment: .center)
         .frame(maxHeight: .infinity, alignment: .bottom)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { inputFocused = false }
+            }
+        }
     }
     
     private func addCard(box: Binding<Box>) {
-        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        
         var b = box.wrappedValue
-        
+        // 生成位置（上の方に出す）
         let px = min(max(0.5 + Double.random(in: -0.14...0.14), 0.08), 0.92)
         let py = min(max(0.35 + Double.random(in: -0.10...0.10), 0.08), 0.80)
         
-        b.cards.append(Card(front: trimmed, back: "", px: px, py: py))
+        // 空カード生成
+        let new = Card(front: "", back: "", px: px, py: py)
+        b.cards.append(new)
         box.wrappedValue = b
         
-        draftText = ""
+        // 生成したカードを“入力対象”にする（表から開始）
+        activeCardID = new.id
+        flipped.remove(new.id)   // 表向き確定
+        
+        // キーボード出す
+        inputFocused = true
         haptic.impactOccurred()
     }
-    
     // MARK: - Binding Box by Path
     
     private func bindingBox() -> Binding<Box> {
@@ -654,6 +672,31 @@ struct WorkspaceView: View {
                 canvasScale = min(canvasScale, 1.0)
                 scaleStart = canvasScale
             }
+    }
+    
+    private func isBack(_ id: UUID) -> Bool {
+        flipped.contains(id)   // flippedに入ってたら裏向き
+    }
+    
+    private func activeTextBinding(box: Binding<Box>) -> Binding<String> {
+        Binding(
+            get: {
+                guard let id = activeCardID else { return "" }
+                guard let c = box.wrappedValue.cards.first(where: { $0.id == id }) else { return "" }
+                return isBack(id) ? c.back : c.front
+            },
+            set: { newValue in
+                guard let id = activeCardID else { return }
+                var b = box.wrappedValue
+                guard let idx = b.cards.firstIndex(where: { $0.id == id }) else { return }
+                if isBack(id) {
+                    b.cards[idx].back = newValue
+                } else {
+                    b.cards[idx].front = newValue
+                }
+                box.wrappedValue = b // ← scheduleSave() は bindingBox.set で走る
+            }
+        )
     }
 }
 
