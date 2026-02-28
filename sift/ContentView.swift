@@ -113,10 +113,14 @@ final class AppState: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var state = AppState()
-
+    @State private var path = NavigationPath()
+    
     var body: some View {
-        NavigationStack {
-            WorkspaceView(currentIndex: nil, state: state)
+        NavigationStack(path: $path) {
+            WorkspaceView(currentIndex: nil, state: state, path: $path)
+                .navigationDestination(for: Int.self) { i in
+                    WorkspaceView(currentIndex: i, state: state, path: $path)
+                }
         }
     }
 }
@@ -127,7 +131,10 @@ struct ContentView: View {
 
 struct WorkspaceView: View {
     let currentIndex: Int?                // [] = root, [0] = A, [1] = B, [1,0] = nested...
+    
     @ObservedObject var state: AppState
+    @Binding var path: NavigationPath
+    
     // input (always at bottom)
     @State private var draftText: String = ""
     
@@ -196,6 +203,9 @@ struct WorkspaceView: View {
                         .accessibilityLabel("Rename boxes")
                     }
                 }
+                .toolbarBackground(headerColor(), for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(.light, for: .navigationBar)
             }
         }
         .sheet(isPresented: $showingRename) {
@@ -341,9 +351,9 @@ struct WorkspaceView: View {
                     .multilineTextAlignment(.leading)
                     .lineLimit(8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(14)
+                    .padding(12)
             )
-            .frame(width: 260, height: 140)
+            .frame(width: 230, height: 125)
             .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
             .scaleEffect(isDragging ? 1.03 : 1.0)
     }
@@ -526,35 +536,40 @@ struct WorkspaceView: View {
                 .padding(16)
         }
         .frame(
-            width: isVertical ? 110 : 420,
-            height: isVertical ? 420 : 120
+            width: isVertical ? 80 : 420,
+            height: isVertical ? 420 : 80
         )
+    }
+    
+    private func openBoxReplace(_ i: Int) {
+        path = NavigationPath()   // ←ここで“積み重なり”を消す
+        path.append(i)            // ←開きたい箱だけ入れる（置き換え）
     }
     
     private func cornerLabels(box: Binding<Box>, size: CGSize) -> some View {
         ZStack {
             if state.root.children.count >= 4 {
                 // 上
-                NavigationLink {
-                    WorkspaceView(currentIndex: 2, state: state)
+                Button {
+                    openBoxReplace(2)
                 } label: {
                     cornerLabel(text: state.root.children[2].name, active: hoverTarget == 2, side: .top, index: 2)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width / 2, y: 50)
+                .position(x: size.width / 2, y: 55)
                 
                 // 下
-                NavigationLink {
-                    WorkspaceView(currentIndex: 3, state: state)
+                Button {
+                    openBoxReplace(3)
                 } label: {
                     cornerLabel(text: state.root.children[3].name, active: hoverTarget == 3, side: .bottom, index: 3)
                 }
                 .buttonStyle(.plain)
-                .position(x: size.width / 2, y: size.height - 150)
+                .position(x: size.width / 2, y: size.height - 110)
                 
                 // 左
-                NavigationLink {
-                    WorkspaceView(currentIndex: 0, state: state)
+                Button {
+                    openBoxReplace(0)
                 } label: {
                     cornerLabel(text: state.root.children[0].name, active: hoverTarget == 0, side: .right, index: 0)
                 }
@@ -562,8 +577,8 @@ struct WorkspaceView: View {
                 .position(x: 70, y: size.height / 2)
                 
                 // 右
-                NavigationLink {
-                    WorkspaceView(currentIndex: 1, state: state)
+                Button {
+                    openBoxReplace(1)
                 } label: {
                     cornerLabel(text: state.root.children[1].name, active: hoverTarget == 1, side: .left, index: 1)
                 }
@@ -592,6 +607,13 @@ struct WorkspaceView: View {
         case 3: return .green
         default: return nil
         }
+    }
+    
+    private func headerColor() -> Color {
+        guard let i = currentIndex else {
+            return Color.blue.opacity(0.25)   // root は薄い青
+        }
+        return boxColor(forIndex: i).opacity(0.85)
     }
     
     
