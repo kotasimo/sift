@@ -149,6 +149,12 @@ struct WorkspaceView: View {
     @State private var editingText: String = ""
     @State private var showingEdit: Bool = false
     @State private var confirmDelete = false
+    // --- camera (workspace) ---
+    @State private var canvasPan: CGSize = .zero
+    @State private var panStart: CGSize = .zero
+    
+    @State private var canvasScale: CGFloat = 1.0
+    @State private var scaleStart: CGFloat = 1.0
     
     @FocusState private var inputFocused: Bool
     
@@ -160,24 +166,36 @@ struct WorkspaceView: View {
         let box = bindingBox()
         
         ZStack {
-            Color.blue.opacity(0.35).ignoresSafeArea()
+            Color.yellow.opacity(0.5).ignoresSafeArea()
+            
+            canvasBackground()
+                .ignoresSafeArea()
             
             GeometryReader { geo in
                 let size = geo.size
                 
                 ZStack {
-                    // 1) Desk: scattered cards
-                    cardBoard(box: box, size: size)
+                    // ===== (A) 動くレイヤー：巨大背景 + カード =====
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.18))
+                            .frame(width: size.width * 4, height: size.height * 4)
+                            .position(x: size.width / 2, y: size.height / 2)
+                        
+                        cardBoard(box: bindingBox(), size: size)
+                    }
+                    .scaleEffect(canvasScale)
+                    .offset(canvasPan)
                     
-                    cornerLabels(box: box, size: size)
+                    // ===== (B) ジェスチャーを受ける透明板（固定） =====
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(panGesture())
+                        .simultaneousGesture(zoomGesture())
                     
-                    // 2) Dock (A/B circles) only if this box has children
-//                    if box.wrappedValue.children.count >= 2 {
-//                        boxDock(box: box, size: size)
-//                    }
-                    
-                    // 3) Input bar (always)
-                    inputBar(box: box)
+                    // ===== (C) 固定HUD：箱 + 入力 =====
+                    cornerLabels(box: bindingBox(), size: size)
+                    inputBar(box: bindingBox())
                 }
                 .navigationTitle(box.wrappedValue.name)
                 .navigationBarTitleDisplayMode(.inline)
@@ -256,6 +274,10 @@ struct WorkspaceView: View {
                 Button("Cancel", role: .cancel) { }
             }
         }
+        .onAppear {
+            panStart = canvasPan
+            scaleStart = canvasScale
+        }
     }
     
     // MARK: - Desk (cards)
@@ -285,8 +307,11 @@ struct WorkspaceView: View {
                                 // ここが核心：px/py を直接更新（アニメ無し）
                                 guard let base = dragBase else { return }
                                 
-                                let newX = CGFloat(base.px) * size.width + value.translation.width
-                                let newY = CGFloat(base.py) * size.height + value.translation.height
+                                let dx = value.translation.width / canvasScale
+                                let dy = value.translation.height / canvasScale
+                                
+                                let newX = CGFloat(base.px) * size.width + dx
+                                let newY = CGFloat(base.py) * size.height + dy
                                 
                                 let clampedX = min(max(newX, 30), size.width - 30)
                                 let clampedY = min(max(newY, 30), size.height - 200)
@@ -616,7 +641,70 @@ struct WorkspaceView: View {
         return boxColor(forIndex: i).opacity(0.85)
     }
     
+    private func canvasBackground() -> some View {
+        Rectangle()
+            .fill(Color.blue.opacity(0.35))
+            .contentShape(Rectangle()) // 空白でもタッチを拾う
+        // --- PAN (1本指) ---
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        // カードを掴んでないときだけパン
+                        guard draggingID == nil else { return }
+                        canvasPan = CGSize(
+                            width: panStart.width + value.translation.width,
+                            height: panStart.height + value.translation.height
+                        )
+                    }
+                    .onEnded { _ in
+                        panStart = canvasPan
+                    }
+            )
+        // --- ZOOM (2本指ピンチ) ---
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { m in
+                        let next = scaleStart * m
+                        // だいたいの範囲に制限
+                        canvasScale = min(max(next, 0.4), 1.0)
+                    }
+                    .onEnded { _ in
+                        scaleStart = canvasScale
+                    }
+            )
+    }
     
+    private func panGesture() -> some Gesture {
+        DragGesture()
+            .onChanged { value in
+                guard draggingID == nil else { return } // カード掴んでる時はパンしない
+                canvasPan = CGSize(
+                    width: panStart.width + value.translation.width,
+                    height: panStart.height + value.translation.height
+                )
+            }
+            .onEnded { _ in
+                panStart = canvasPan
+            }
+    }
+    
+    private func zoomGesture() -> some Gesture {
+        MagnificationGesture()
+            .onChanged { m in
+                // 拡大方向（m > 1）は無視する
+                guard m <= 1.0 else {
+                    canvasScale = min(canvasScale, 1.0)
+                    return
+                }
+                let next = scaleStart * m
+                canvasScale = max(next, 0.4)   // 下限だけ効かせる（上限は guard で殺してる）
+            }
+            .onEnded { _ in
+                // 念のため 1.0 を超えない状態で確定
+                canvasScale = min(canvasScale, 1.0)
+                scaleStart = canvasScale
+            }
+    }
 }
 
 struct RenameBoxesSheet: View {
